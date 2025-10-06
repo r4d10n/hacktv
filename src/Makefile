@@ -5,6 +5,7 @@ PKGCONF := pkg-config
 CFLAGS  := -g -Wall -pthread -O3 $(EXTRA_CFLAGS) -DVERSION=\"$(VERSION)\"
 LDFLAGS := -g -lm -pthread $(EXTRA_LDFLAGS)
 OBJS    := hacktv.o common.o fir.o vbidata.o teletext.o wss.o video.o fifo.o mac.o dance.o eurocrypt.o videocrypt.o videocrypts.o syster.o syster-ca.o acp.o vits.o vitc.o nicam728.o sis.o av.o av_test.o av_ffmpeg.o rf.o rf_file.o spdif.o cc608.o
+RX_OBJS := hacktv-rx.o common.o fir.o
 PKGS    := libavcodec libavformat libavdevice libswscale libswresample libavutil $(EXTRA_PKGS)
 
 HACKRF := $(shell $(PKGCONF) --exists libhackrf && echo hackrf)
@@ -17,6 +18,7 @@ endif
 SOAPYSDR := $(shell $(PKGCONF) --exists SoapySDR && echo SoapySDR)
 ifeq ($(SOAPYSDR),SoapySDR)
 	OBJS += rf_soapysdr.o
+	RX_OBJS += rf_soapysdr.o
 	PKGS += SoapySDR
 	CFLAGS += -DHAVE_SOAPYSDR
 endif
@@ -31,20 +33,25 @@ endif
 CFLAGS  += $(shell $(PKGCONF) --cflags $(PKGS))
 LDFLAGS += $(shell $(PKGCONF) --libs $(PKGS))
 
-all: hacktv
+all: hacktv hacktv-rx
 
 hacktv: $(OBJS)
 	$(CC) -o hacktv $(OBJS) $(LDFLAGS)
+
+hacktv-rx: $(RX_OBJS)
+	$(CC) -o hacktv-rx $(RX_OBJS) $(LDFLAGS)
 
 %.o: %.c Makefile
 	$(CC) $(CFLAGS) -c $< -o $@
 	@$(CC) $(CFLAGS) -MM $< -o $(@:.o=.d)
 
-install:
+install: all
 	cp -f hacktv $(PREFIX)/usr/local/bin/
+	cp -f hacktv-rx $(PREFIX)/usr/local/bin/
 
 clean:
-	rm -f *.o *.d hacktv hacktv.exe
+	rm -f *.o *.d hacktv hacktv.exe hacktv-rx
 
 -include $(OBJS:.o=.d)
+-include $(RX_OBJS:.o=.d)
 
