@@ -1,0 +1,349 @@
+================================================================================
+HACKTV RECEIVER - MISSING FEATURES QUICK REFERENCE
+================================================================================
+
+CRITICAL GAPS (Tier 1 - Should Implement)
+================================================================================
+
+1. AUDIO: NICAM 728 Digital Audio Decoder
+   - Status: NOT IMPLEMENTED
+   - Impact: CRITICAL (broadcast standard for stereo audio)
+   - Complexity: VERY HIGH
+   - Est. Effort: 4-6 weeks
+   - LOC: 500-800
+   - Current: Basic FM mono only
+   - Needed: QPSK demodulator, frame sync (FAW 0x4E), error correction
+   
+2. VBI: Teletext Decoder (ITU-R BT.706)
+   - Status: NOT IMPLEMENTED  
+   - Impact: CRITICAL (subtitles, news, metadata)
+   - Complexity: VERY HIGH
+   - Est. Effort: 4-6 weeks
+   - LOC: 600-1000
+   - Current: None
+   - Needed: Hamming decoder, page storage, character ROM
+   
+3. VBI: WSS Decoder (Widescreen Signaling)
+   - Status: NOT IMPLEMENTED
+   - Impact: MEDIUM (aspect ratio signaling)
+   - Complexity: MEDIUM
+   - Est. Effort: 1-2 weeks
+   - LOC: 150-250
+   - Current: None
+   - Needed: AM demod at 6 MHz, bit sync, aspect ratio codes
+   
+4. SDR: Real-time Hardware Testing
+   - Status: PARTIALLY IMPLEMENTED (placeholder only)
+   - Impact: CRITICAL (core functionality)
+   - Complexity: MEDIUM
+   - Est. Effort: 2-3 weeks
+   - LOC: 200-300
+   - Current: SoapySDR API exists but untested
+   - Needed: Hardware validation (RTL-SDR, PlutoSDR, HackRF)
+   
+5. VIDEO: Enhanced Video Mode Support
+   - Status: BASIC ONLY (8 modes vs 46 transmitter modes)
+   - Impact: HIGH (regional/legacy systems)
+   - Complexity: LOW
+   - Est. Effort: 2-3 days
+   - LOC: 50-100
+   - Current: PAL-I, NTSC-M, SECAM-L
+   - Missing: PAL-B/G/D/K/M/N, SECAM variants, PAL-60
+   
+6. OUTPUT: Video Codec Conversion
+   - Status: NOT IMPLEMENTED
+   - Impact: HIGH (2.5 GB/hour for RGB output)
+   - Complexity: LOW (use FFmpeg)
+   - Est. Effort: 1-2 weeks
+   - LOC: 100-200
+   - Current: RGB32 only
+   - Needed: H.264/H.265, YUV, MJPEG, MP4/WebM containers
+
+================================================================================
+IMPORTANT GAPS (Tier 2 - Nice to Have)
+================================================================================
+
+7. VBI: VITC/VITS Decoders
+   - Timecode extraction (line 18-19)
+   - Test signal analysis (gray bars, chrominance levels)
+   - Effort: 1-2 weeks, 150-250 LOC
+   
+8. AUDIO: De-emphasis Filtering
+   - Standard -6dB/octave above 2.1 kHz
+   - Effort: 1-2 days, 20-50 LOC
+   - Impact: Quality (3-5 dB audio improvement)
+   
+9. AGC: Adaptive Threshold Adjustment
+   - Dynamic sync threshold based on statistics
+   - Effort: 1-2 weeks, 100-150 LOC
+   - Impact: Weak signal handling
+   
+10. ROBUSTNESS: Weak Signal Handling
+    - Pre-filtering, hysteresis, line averaging
+    - Effort: 2-3 weeks, 200-300 LOC
+    - Impact: Reception in poor conditions
+    
+11. DISPLAY: SDL2 Preview Window
+    - Real-time display for debugging
+    - Effort: 1-2 weeks, 150-250 LOC
+    - Impact: User experience
+
+================================================================================
+OPTIONAL FEATURES (Tier 3 - Nice to Have)
+================================================================================
+
+12. AUDIO: A2 Stereo Decoder (5.5 MHz pilot tone detection)
+    - Effort: 2-3 weeks, 200-300 LOC
+    
+13. VIDEO: SECAM FM Support (Dr/Db subcarrier demodulation)
+    - Effort: 2-3 weeks, 200-300 LOC
+    
+14. ROBUSTNESS: Multipath/Echo Cancellation
+    - Adaptive FIR filter (5-10 taps)
+    - Effort: 3-4 weeks, 300-500 LOC
+    
+15. OUTPUT: Metadata Export (JSON)
+    - Frame statistics, sync quality, timestamps
+    - Effort: 1-2 days, 100-150 LOC
+    
+16. AUDIO: Resampling to Custom Output Rates
+    - Polyphase resampler (8-96 kHz)
+    - Effort: 1-2 weeks, 100-150 LOC
+
+================================================================================
+NOT RECOMMENDED (Tier 4 - Skip)
+================================================================================
+
+17. SCRAMBLING: Videocrypt/Videocrypt2/VideocryptS Decryption
+    - Reason: LEGAL ISSUES (unauthorized descrambling)
+    - Reason: EXTREME COMPLEXITY (ECM decoder, key management)
+    - Reason: PROPRIETARY SYSTEMS
+    
+18. CONDITIONAL ACCESS: Syster/EuroCrypt Decryption  
+    - Reason: EXTREME COMPLEXITY
+    - Reason: PROPRIETARY ALGORITHMS
+    - Reason: LIMITED ACTIVE SYSTEMS
+    
+19. MAC SYSTEMS: D-MAC / D2-MAC Receiver
+    - Reason: OBSOLETE (switched off 2012)
+    - Reason: EXTREMELY COMPLEX (QAM/QPSK demod, clock recovery)
+    - Reason: EXTREMELY HIGH EFFORT (1000+ LOC, weeks of work)
+    
+20. LEGACY RASTERS: 405-line, 819-line, Baird 30/240, NBTV 32, Apollo, CBS
+    - Reason: NICHE HOBBYIST ONLY
+    - Reason: NO ACTIVE BROADCAST SYSTEMS
+    - Reason: WOULD REQUIRE COMPLETE REWRITE
+
+================================================================================
+RECOMMENDED IMPLEMENTATION ORDER
+================================================================================
+
+Phase 1: Core Audio (Weeks 1-4)
+  Week 1-2: NICAM 728 decoder
+  Week 3:   A2 stereo detection  
+  Week 4:   De-emphasis filtering
+  RESULT: Broadcast audio support
+
+Phase 2: VBI Services (Weeks 5-8)
+  Week 5-6: Teletext decoder
+  Week 7:   WSS decoder
+  Week 8:   VITC/VITS extraction
+  RESULT: Subtitles, metadata, aspect ratio
+
+Phase 3: Hardware Integration (Weeks 9-10)
+  Week 9:  SDR hardware testing (RTL-SDR, PlutoSDR, HackRF)
+  Week 10: AGC loop, frequency tuning
+  RESULT: Real-time reception capability
+
+Phase 4: Output & Quality (Weeks 11-12)
+  Week 11: Video codec output, SDL2 preview
+  Week 12: Metadata export, robustness improvements
+  RESULT: Production-ready receiver
+
+TOTAL EFFORT: 12 weeks (assuming single developer, some parallelization possible)
+
+================================================================================
+IMPLEMENTATION CHECKLIST
+================================================================================
+
+NICAM 728 Decoder
+  [ ] Study ITU-R BT.708 NICAM specification
+  [ ] Implement QPSK demodulator for 6.552 MHz (PAL) / 5.85 MHz (NTSC)
+  [ ] Implement Hamming 8/4 error correction decoder
+  [ ] Implement frame synchronization (FAW 0x4E pattern)
+  [ ] Implement audio frame decompression (stereo/mono/dual-mono)
+  [ ] Add resampling from 32 kHz to output rate
+  [ ] Integrate with receiver.c audio processing
+  [ ] Test with NICAM broadcast signals
+  [ ] Validate error correction with corrupted frames
+  [ ] Optimize for real-time performance
+
+Teletext Decoder
+  [ ] Study ITU-R BT.706 Level 1 specification
+  [ ] Implement Hamming 8/4 decoder for teletext packets
+  [ ] Implement page memory (25 rows × 40 columns)
+  [ ] Implement character ROM (graphics, characters)
+  [ ] Implement DRCS (Dynamic Redefinable Character Set) support
+  [ ] Extract from lines 6-22 (625) / 10-20 (525)
+  [ ] Parse magazine/page/row numbers
+  [ ] Handle color attributes and display modes
+  [ ] Output as text or bitmap format
+  [ ] Test with teletext test patterns
+  [ ] Validate with real broadcasts
+
+WSS Decoder
+  [ ] Study ITU-R BT.1119 WSS specification
+  [ ] Implement AM demodulation at 6 MHz (625) / 5 MHz (525)
+  [ ] Extract from line 23 (625) / 20 (525)
+  [ ] Implement bit synchronization (6 bit-periods per bit)
+  [ ] Decode 14-bit WSS data
+  [ ] Extract aspect ratio codes (4:3, 16:9, 14:9, etc.)
+  [ ] Parse protection modes
+  [ ] Output metadata
+  [ ] Test with WSS test patterns
+
+SDR Hardware Testing
+  [ ] Test SoapySDR integration with RTL-SDR
+  [ ] Test SoapySDR integration with PlutoSDR
+  [ ] Test SoapySDR integration with HackRF One
+  [ ] Create hardware calibration procedures
+  [ ] Document known working configurations
+  [ ] Implement AGC feedback loop
+  [ ] Add frequency offset correction
+  [ ] Test with real broadcasts
+  [ ] Validate sample rate accuracy
+  [ ] Measure latency and jitter
+
+Enhanced Video Modes
+  [ ] Add PAL-B/G configuration
+  [ ] Add PAL-D/K configuration
+  [ ] Add PAL-M configuration (525-line PAL)
+  [ ] Add PAL-N configuration (Argentine variant)
+  [ ] Add PAL-60 configuration (525-line at 25 fps)
+  [ ] Add SECAM-B/G configuration
+  [ ] Add SECAM-D/K configuration
+  [ ] Add SECAM-I configuration
+  [ ] Add regional variants to mode selector
+  [ ] Test with transmitter modes
+
+Output Codec Support
+  [ ] Add FFmpeg library integration
+  [ ] Implement YUV output (planar I420/YV12)
+  [ ] Implement H.264 encoding
+  [ ] Implement H.265 encoding (if desired)
+  [ ] Implement MJPEG output
+  [ ] Container support (MP4, WebM)
+  [ ] Add codec selection via CLI
+  [ ] Add quality/bitrate parameters
+  [ ] Test with multiple codecs
+  [ ] Validate output file compatibility
+
+================================================================================
+FILES REQUIRING MODIFICATION/CREATION
+================================================================================
+
+New Files to Create:
+  src/nicam_decoder.c/h        (NICAM QPSK demodulation and frame sync)
+  src/teletext_decoder.c/h     (Hamming decoder, page storage, character ROM)
+  src/wss_decoder.c/h          (AM demod, bit sync, data extraction)
+  src/vitc_decoder.c/h         (Timecode extraction)
+  src/vits_decoder.c/h         (Test signal analysis)
+  src/audio_deemph.c/h         (De-emphasis IIR filter)
+  src/output_codecs.c/h        (FFmpeg integration, codec selection)
+  src/sdr_validation.c/h       (Hardware testing procedures)
+  src/agc_adaptive.c/h         (Dynamic AGC threshold)
+
+Files to Modify:
+  src/receiver.c/h             (Integrate decoders, +500 LOC)
+  src/hackrx.c                 (Add CLI options, +200 LOC)
+  src/rf_sdr.c/h               (Hardware testing, +300 LOC)
+  src/Makefile                 (New object files, +50 LOC)
+  src/common.c/h               (Utility functions if needed)
+
+Documentation to Create:
+  RECEIVER_IMPLEMENTATION_GUIDE.md
+  HARDWARE_TESTING_GUIDE.md
+  NICAM_DECODER_DESIGN.md
+  TELETEXT_DECODER_DESIGN.md
+
+================================================================================
+TESTING REQUIREMENTS
+================================================================================
+
+Test Signal Generation:
+  - NICAM stereo/mono/dual-mono signals
+  - Teletext with graphics (DRCS)
+  - WSS with various aspect ratios
+  - PAL variants (B/G, D/K, M, N)
+  - Weak signal (SNR sweep 20-5 dB)
+  - Multipath/echo simulation
+  - VITC timecode sequences
+  - VITS calibration patterns
+
+Hardware Testing:
+  - RTL-SDR (SDRSharp configuration, FM radio reception first)
+  - PlutoSDR (IIO configuration, AD9361 setup)
+  - HackRF One (original target device)
+  - Antenna setup and calibration
+  - Real broadcast reception (BBC, other regional TV stations)
+
+Validation:
+  - Address Sanitizer (zero leaks, zero buffer overflows)
+  - Valgrind (memory analysis)
+  - Performance profiling (real-time capable?)
+  - Backwards compatibility (existing code still works)
+  - Unit tests for decoders
+  - Integration tests with full receiver
+
+================================================================================
+ESTIMATED FINAL CAPABILITIES (POST-IMPLEMENTATION)
+================================================================================
+
+After completing Tiers 1-3, the receiver would support:
+
+AUDIO:
+  ✅ Basic FM mono (current)
+  ✅ NICAM 728 stereo/dual-mono/mono+data (NEW)
+  ✅ A2 stereo with pilot detection (NEW)
+  ✅ De-emphasis filtering (NEW)
+  ✅ Configurable output rates 8-96 kHz (NEW)
+
+VIDEO STANDARDS:
+  ✅ PAL System I (current)
+  ✅ PAL System B/G/D/K/M/N (NEW)
+  ✅ NTSC System M (current)
+  ✅ NTSC System I (NEW)
+  ✅ SECAM Systems L/B/G/D/K/I (NEW)
+  ✅ PAL-60, SECAM-FM (NEW)
+
+VBI SERVICES:
+  ✅ Teletext pages (1-8 magazines, DRCS graphics) (NEW)
+  ✅ Widescreen Signaling (aspect ratio) (NEW)
+  ✅ VITC timecode (NEW)
+  ✅ VITS test signals (NEW)
+
+OUTPUT FORMATS:
+  ✅ RGB32 (current)
+  ✅ YUV planar (NEW)
+  ✅ H.264/H.265 (NEW)
+  ✅ MJPEG (NEW)
+  ✅ MP4/WebM containers (NEW)
+  ✅ Metadata JSON export (NEW)
+  ✅ IQ baseband export (NEW)
+
+HARDWARE:
+  ✅ File input (current)
+  ✅ Real-time SDR (RTL-SDR, PlutoSDR, HackRF) (NEW)
+  ✅ AGC with feedback loop (NEW)
+  ✅ Frequency offset correction (NEW)
+
+ROBUSTNESS:
+  ✅ PLL sync (current)
+  ✅ Basic AGC (current)
+  ✅ Adaptive thresholds (NEW)
+  ✅ Weak signal handling (NEW)
+  ✅ Multipath/echo cancellation (NEW)
+
+================================================================================
+END OF QUICK REFERENCE
+================================================================================

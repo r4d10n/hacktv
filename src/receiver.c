@@ -397,8 +397,44 @@ int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 
 	pal->carrier_phase = 0;
 	pal->v_switch = 0;
-	pal->u_filter = NULL;
-	pal->v_filter = NULL;
+
+	/* CRITICAL: Initialize proper chroma bandpass FIR filters */
+	/* PAL chroma bandpass: 4.43 MHz ± 1.3 MHz (3.13 MHz - 5.73 MHz) */
+	int ntaps = 65;  /* Higher tap count for better selectivity */
+	double *taps = calloc(ntaps, sizeof(double));
+
+	if(!taps)
+	{
+		rx_pal_free(pal);
+		return -1;
+	}
+
+	/* Design complex bandpass filter centered at PAL subcarrier */
+	double low_cutoff = pal->subcarrier_freq - 1300000.0;   /* 3.13 MHz */
+	double high_cutoff = pal->subcarrier_freq + 1300000.0;  /* 5.73 MHz */
+	double transition_width = 500000.0;  /* 500 kHz transition */
+
+	fir_complex_band_pass(taps, ntaps, sample_rate, low_cutoff, high_cutoff, transition_width, 1.0);
+
+	/* Initialize FIR filter for U channel */
+	pal->u_filter = calloc(1, sizeof(fir_int16_t));
+	if(!pal->u_filter || fir_int16_init(pal->u_filter, taps, ntaps, 1, 1, 0) != 0)
+	{
+		free(taps);
+		rx_pal_free(pal);
+		return -1;
+	}
+
+	/* Initialize FIR filter for V channel (same coefficients) */
+	pal->v_filter = calloc(1, sizeof(fir_int16_t));
+	if(!pal->v_filter || fir_int16_init(pal->v_filter, taps, ntaps, 1, 1, 0) != 0)
+	{
+		free(taps);
+		rx_pal_free(pal);
+		return -1;
+	}
+
+	free(taps);  /* FIR filters have copied the coefficients */
 
 	/* Initialize burst PLL for phase-locked color demodulation */
 	pll_burst_init(&pal->burst_pll, sample_rate, pal->subcarrier_freq);
@@ -413,8 +449,7 @@ int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 		return -1;
 	}
 
-	/* TODO: Create chroma bandpass filters */
-	/* U and V are at ±1.3 MHz around the subcarrier */
+	/* FIR filters initialized above - used for chroma extraction when comb filter unavailable */
 
 	return 0;
 }
@@ -579,8 +614,44 @@ int rx_ntsc_init(rx_ntsc_decoder_t *ntsc, int sample_rate, int line_length)
 	}
 
 	ntsc->carrier_phase = 0;
-	ntsc->i_filter = NULL;
-	ntsc->q_filter = NULL;
+
+	/* CRITICAL: Initialize proper chroma bandpass FIR filters */
+	/* NTSC chroma bandpass: 3.58 MHz ± 1.3 MHz (2.28 MHz - 4.88 MHz) */
+	int ntaps = 65;  /* Higher tap count for better selectivity */
+	double *taps = calloc(ntaps, sizeof(double));
+
+	if(!taps)
+	{
+		rx_ntsc_free(ntsc);
+		return -1;
+	}
+
+	/* Design complex bandpass filter centered at NTSC subcarrier */
+	double low_cutoff = ntsc->subcarrier_freq - 1300000.0;   /* 2.28 MHz */
+	double high_cutoff = ntsc->subcarrier_freq + 1300000.0;  /* 4.88 MHz */
+	double transition_width = 500000.0;  /* 500 kHz transition */
+
+	fir_complex_band_pass(taps, ntaps, sample_rate, low_cutoff, high_cutoff, transition_width, 1.0);
+
+	/* Initialize FIR filter for I channel */
+	ntsc->i_filter = calloc(1, sizeof(fir_int16_t));
+	if(!ntsc->i_filter || fir_int16_init(ntsc->i_filter, taps, ntaps, 1, 1, 0) != 0)
+	{
+		free(taps);
+		rx_ntsc_free(ntsc);
+		return -1;
+	}
+
+	/* Initialize FIR filter for Q channel (same coefficients) */
+	ntsc->q_filter = calloc(1, sizeof(fir_int16_t));
+	if(!ntsc->q_filter || fir_int16_init(ntsc->q_filter, taps, ntaps, 1, 1, 0) != 0)
+	{
+		free(taps);
+		rx_ntsc_free(ntsc);
+		return -1;
+	}
+
+	free(taps);  /* FIR filters have copied the coefficients */
 
 	/* Initialize burst PLL for phase-locked color demodulation */
 	pll_burst_init(&ntsc->burst_pll, sample_rate, ntsc->subcarrier_freq);
@@ -594,9 +665,6 @@ int rx_ntsc_init(rx_ntsc_decoder_t *ntsc, int sample_rate, int line_length)
 		rx_ntsc_free(ntsc);
 		return -1;
 	}
-
-	/* TODO: Create chroma bandpass filters for I and Q */
-	/* For now, we'll use the simple in-line filtering */
 
 	return 0;
 }
