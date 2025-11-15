@@ -66,6 +66,7 @@ static void print_usage(void)
 		"      --teletext                 Enable teletext/VBI decoding\n"
 		"      --wss                      Enable WSS (Widescreen Signaling) decoding\n"
 		"      --vitc                     Enable VITC (Vertical Interval Timecode) decoding\n"
+		"      --vits                     Enable VITS (Vertical Interval Test Signals) decoding\n"
 		"\n"
 		"Other options:\n"
 		"  -v, --verbose                  Enable verbose output\n"
@@ -223,6 +224,7 @@ int main(int argc, char *argv[])
 		{ "teletext-output", required_argument, 0, 'X' },
 		{ "wss",           no_argument,       0, 'W' },
 		{ "vitc",          no_argument,       0, 'C' },
+		{ "vits",          no_argument,       0, 'Y' },
 		{ "video-format",  required_argument, 0, 'F' },
 		{ "verbose",       no_argument,       0, 'v' },
 		{ "help",          no_argument,       0, 'h' },
@@ -297,6 +299,9 @@ int main(int argc, char *argv[])
 				break;
 			case 'C':
 				conf.enable_vitc = 1;
+				break;
+			case 'Y':
+				conf.enable_vits = 1;
 				break;
 			case 'F':
 				if(strcasecmp(optarg, "rgb") == 0)

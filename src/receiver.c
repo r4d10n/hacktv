@@ -1175,6 +1175,22 @@ int rx_init(rx_t *rx, rx_config_t *conf)
 		printf("VITC (Vertical Interval Timecode) decoder enabled\n");
 	}
 
+	/* Initialize VITS decoder if enabled */
+	if(conf->enable_vits)
+	{
+		int is_625_line = (conf->lines == 625);
+
+		if(vits_decoder_init(&rx->vits_decoder, conf->sample_rate, line_length, is_625_line) != 0)
+		{
+			fprintf(stderr, "Failed to initialize VITS decoder\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		rx->enable_vits = 1;
+		printf("VITS (Vertical Interval Test Signals) decoder enabled\n");
+	}
+
 	/* Initialize video output if specified */
 	if(conf->video_output_file && conf->video_output_format != VIDEO_OUT_NONE)
 	{
@@ -1250,6 +1266,12 @@ void rx_free(rx_t *rx)
 	if(rx->enable_vitc)
 	{
 		vitc_decoder_free(&rx->vitc_decoder);
+	}
+
+	/* Free VITS decoder */
+	if(rx->enable_vits)
+	{
+		vits_decoder_free(&rx->vits_decoder);
 	}
 
 	/* Close video output */
@@ -1371,6 +1393,26 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 						vitc_decoder_get_info(&rx->vitc_decoder, vitc_info, sizeof(vitc_info));
 						fprintf(stderr, "%s\n", vitc_info);
 						last_seconds = rx->vitc_decoder.current_tc.seconds;
+					}
+				}
+			}
+
+			/* Process VITS (Vertical Interval Test Signals) */
+			if(rx->enable_vits)
+			{
+				vits_type_t vits_type = vits_decoder_process_line(&rx->vits_decoder, rx->line_buffer, line_num);
+
+				/* Print VITS info when test signals detected */
+				if(vits_type != VITS_TYPE_NONE)
+				{
+					static int vits_report_counter = 0;
+					/* Report every 25 frames (1 second for PAL) */
+					if(vits_report_counter++ >= 25)
+					{
+						char vits_info[256];
+						vits_decoder_get_info(&rx->vits_decoder, vits_info, sizeof(vits_info));
+						fprintf(stderr, "%s\n", vits_info);
+						vits_report_counter = 0;
 					}
 				}
 			}

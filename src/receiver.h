@@ -20,6 +20,7 @@
 #include "video_output.h"
 #include "wss_decoder.h"
 #include "vitc_decoder.h"
+#include "vits_decoder.h"
 
 /* Demodulator types */
 typedef enum {
@@ -223,6 +224,9 @@ typedef struct {
 	/* VITC (Vertical Interval Timecode) */
 	int enable_vitc;
 
+	/* VITS (Vertical Interval Test Signals) */
+	int enable_vits;
+
 	/* Video output */
 	video_output_format_t video_output_format;
 	const char *video_output_file;
@@ -267,6 +271,10 @@ typedef struct {
 	/* VITC decoder (Vertical Interval Timecode) */
 	vitc_decoder_t vitc_decoder;
 	int enable_vitc;
+
+	/* VITS decoder (Vertical Interval Test Signals) */
+	vits_decoder_t vits_decoder;
+	int enable_vits;
 
 	/* Video output */
 	video_output_t video_output;
