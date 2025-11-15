@@ -12,6 +12,11 @@
 #include "receiver.h"
 #include "common.h"
 
+#if defined(HAVE_RX_SOAPYSDR) || defined(HAVE_LIBIIO)
+#include "rf_sdr.h"
+#define HAVE_SDR
+#endif
+
 #ifndef VERSION
 #define VERSION "1.0-receiver"
 #endif
@@ -35,17 +40,27 @@ static void print_usage(void)
 		"\n"
 		"Usage: hackrx [options] <input>\n"
 		"\n"
+		"Input options:\n"
 		"  -i, --input <file>             Input IQ file (int16 complex samples)\n"
+		"      --sdr                      Use SDR hardware input\n"
+		"      --device <id>              SDR device identifier\n"
+		"      --gain <value>             RX gain in dB (0-70). Default: auto\n"
+		"\n"
+		"Output options:\n"
 		"  -o, --output <file>            Output video file (raw RGB)\n"
 		"  -a, --audio-output <file>      Output audio file (raw PCM)\n"
+		"\n"
+		"Reception settings:\n"
 		"  -m, --mode <name>              TV mode (pal, ntsc, secam). Default: pal\n"
 		"  -s, --samplerate <value>       Sample rate in Hz. Default: 16000000\n"
 		"  -d, --demod <type>             Demodulator type (fm, am, vsb). Default: fm\n"
-		"  -f, --frequency <value>        RF frequency in Hz (for future SDR input)\n"
+		"  -f, --frequency <value>        RF frequency in Hz\n"
 		"      --if <value>               IF frequency for VSB demod. Default: 6000000\n"
 		"      --audio-carrier <value>    Audio carrier frequency in Hz\n"
 		"      --audio-rate <value>       Audio output sample rate. Default: 48000\n"
 		"      --no-audio                 Disable audio decoding\n"
+		"\n"
+		"Other options:\n"
 		"  -v, --verbose                  Enable verbose output\n"
 		"  -h, --help                     Display this help and exit\n"
 		"      --version                  Display version and exit\n"
@@ -69,8 +84,11 @@ static void print_usage(void)
 		"  # Receive NTSC with FM demodulation and audio\n"
 		"  hackrx -i sat.iq -o video.rgb -a audio.pcm -m ntsc -d fm\n"
 		"\n"
-		"  # Receive SECAM from file\n"
-		"  hackrx -i secam.iq -o video.rgb -m secam -d vsb\n"
+		"  # Receive from SDR hardware (PlutoSDR or RTL-SDR)\n"
+		"  hackrx --sdr -f 474000000 -o video.rgb -m pal -d vsb --gain 40\n"
+		"\n"
+		"  # Receive from specific SDR device\n"
+		"  hackrx --sdr --device \"driver=rtlsdr\" -f 854000000 -o video.rgb -m ntsc\n"
 		"\n"
 	);
 }
@@ -133,6 +151,15 @@ int main(int argc, char *argv[])
 	uint64_t total_samples = 0;
 	int frames_written = 0;
 
+#ifdef HAVE_SDR
+	/* SDR-specific variables */
+	int use_sdr = 0;
+	const char *sdr_device = NULL;
+	double sdr_gain = -1.0;  /* -1 = auto */
+	sdr_t *sdr = NULL;
+	sdr_config_t sdr_conf;
+#endif
+
 	/* Default configuration */
 	memset(&conf, 0, sizeof(rx_config_t));
 	conf.sample_rate = 16000000;
@@ -154,6 +181,9 @@ int main(int argc, char *argv[])
 		{ "audio-carrier", required_argument, 0, 'A' },
 		{ "audio-rate",    required_argument, 0, 'R' },
 		{ "no-audio",      no_argument,       0, 'N' },
+		{ "sdr",           no_argument,       0, 'S' },
+		{ "device",        required_argument, 0, 'D' },
+		{ "gain",          required_argument, 0, 'g' },
 		{ "verbose",       no_argument,       0, 'v' },
 		{ "help",          no_argument,       0, 'h' },
 		{ "version",       no_argument,       0, 'V' },
@@ -161,7 +191,7 @@ int main(int argc, char *argv[])
 	};
 
 	/* Parse command line options */
-	while((opt = getopt_long(argc, argv, "i:o:a:m:s:d:f:vhV", long_options, &option_index)) != -1)
+	while((opt = getopt_long(argc, argv, "i:o:a:m:s:d:f:g:vhV", long_options, &option_index)) != -1)
 	{
 		switch(opt)
 		{
@@ -198,6 +228,17 @@ int main(int argc, char *argv[])
 			case 'N':
 				conf.enable_audio = 0;
 				break;
+#ifdef HAVE_SDR
+			case 'S':
+				use_sdr = 1;
+				break;
+			case 'D':
+				sdr_device = optarg;
+				break;
+			case 'g':
+				sdr_gain = atof(optarg);
+				break;
+#endif
 			case 'v':
 				verbose = 1;
 				break;
@@ -214,12 +255,28 @@ int main(int argc, char *argv[])
 	}
 
 	/* Validate input */
+#ifdef HAVE_SDR
+	if(!input_file && !use_sdr)
+	{
+		fprintf(stderr, "Error: Either input file (-i) or SDR mode (--sdr) is required\n");
+		print_usage();
+		return 1;
+	}
+
+	if(use_sdr && !conf.rf_frequency)
+	{
+		fprintf(stderr, "Error: RF frequency (-f) is required for SDR mode\n");
+		print_usage();
+		return 1;
+	}
+#else
 	if(!input_file)
 	{
 		fprintf(stderr, "Error: Input file is required\n");
 		print_usage();
 		return 1;
 	}
+#endif
 
 	if(!output_file)
 	{

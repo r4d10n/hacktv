@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include "video.h"
 #include "fir.h"
+#include "pll.h"
 
 /* Demodulator types */
 typedef enum {
@@ -76,6 +77,10 @@ typedef struct {
 	/* AGC */
 	int16_t agc_level;
 	int32_t agc_accumulator;
+
+	/* PLL for sync recovery */
+	pll_hsync_t pll;
+	int use_pll;              /* Enable PLL mode */
 } rx_sync_t;
 
 /* PAL colour decoder */
@@ -99,6 +104,10 @@ typedef struct {
 
 	/* PAL line alternation */
 	int v_switch;
+
+	/* PLL for burst lock */
+	pll_burst_t burst_pll;
+	int use_burst_pll;        /* Enable burst PLL mode */
 } rx_pal_decoder_t;
 
 /* NTSC colour decoder */
@@ -119,6 +128,10 @@ typedef struct {
 	/* Chroma filters */
 	fir_int16_t *i_filter;
 	fir_int16_t *q_filter;
+
+	/* PLL for burst lock */
+	pll_burst_t burst_pll;
+	int use_burst_pll;        /* Enable burst PLL mode */
 } rx_ntsc_decoder_t;
 
 /* SECAM colour decoder */

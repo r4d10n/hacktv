@@ -232,6 +232,12 @@ int rx_sync_init(rx_sync_t *sync, int sample_rate, int line_length, int frame_li
 	sync->agc_level = INT16_MAX / 2;
 	sync->agc_accumulator = 0;
 
+	/* Initialize PLL for sync recovery */
+	/* Calculate nominal line frequency from sample rate and line length */
+	double line_freq = (double)sample_rate / (double)line_length;
+	pll_hsync_init(&sync->pll, sample_rate, line_freq);
+	sync->use_pll = 1;  /* Enable PLL mode by default */
+
 	return 0;
 }
 
@@ -260,6 +266,18 @@ int rx_sync_process(rx_sync_t *sync, int16_t sample, int *line_start, int *field
 	{
 		*line_start = 1;
 
+		/* Update PLL with detected sync pulse */
+		if(sync->use_pll)
+		{
+			pll_hsync_update(&sync->pll, 1);
+			/* Use PLL lock status to determine if we're in sync */
+			sync->in_sync = pll_hsync_is_locked(&sync->pll);
+		}
+		else
+		{
+			sync->in_sync = 1;
+		}
+
 		/* Check if this is a vsync (long sync pulse) */
 		/* For now, just count lines */
 		sync->current_line++;
@@ -274,10 +292,15 @@ int rx_sync_process(rx_sync_t *sync, int16_t sample, int *line_start, int *field
 		}
 
 		sync->samples_since_sync = 0;
-		sync->in_sync = 1;
 	}
 	else
 	{
+		/* Update PLL with no sync pulse */
+		if(sync->use_pll)
+		{
+			pll_hsync_update(&sync->pll, 0);
+		}
+
 		sync->samples_since_sync++;
 
 		/* Check if we lost sync */
@@ -330,6 +353,10 @@ int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 	pal->u_filter = NULL;
 	pal->v_filter = NULL;
 
+	/* Initialize burst PLL for phase-locked color demodulation */
+	pll_burst_init(&pal->burst_pll, sample_rate, pal->subcarrier_freq);
+	pal->use_burst_pll = 1;  /* Enable burst PLL by default */
+
 	/* TODO: Create chroma bandpass filters */
 	/* U and V are at ±1.3 MHz around the subcarrier */
 
@@ -363,28 +390,44 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 	int16_t y, u, v;
 	uint8_t r, g, b;
 	cint32_t chroma_sample;
-	cint32_t demod_u, demod_v;
+	int32_t ref_cos, ref_sin;
+
+	/* Process color burst to lock PLL */
+	if(pal->use_burst_pll)
+	{
+		pll_burst_process(&pal->burst_pll, line, pal->line_length);
+	}
 
 	for(x = 0; x < width; x++)
 	{
 		/* Extract luminance (Y) - this is the baseband video */
 		y = line[x];
 
+		/* Get reference from PLL or LUT */
+		if(pal->use_burst_pll && pll_burst_is_locked(&pal->burst_pll))
+		{
+			/* Use PLL-generated reference for better phase accuracy */
+			pll_burst_get_reference(&pal->burst_pll, &ref_cos, &ref_sin);
+		}
+		else
+		{
+			/* Fall back to LUT */
+			ref_cos = pal->carrier_lut[pal->carrier_phase].i;
+			ref_sin = pal->carrier_lut[pal->carrier_phase].q;
+			pal->carrier_phase = (pal->carrier_phase + 1) % pal->carrier_lut_size;
+		}
+
 		/* Extract chrominance by multiplying with subcarrier */
 		chroma_sample.i = line[x];
 		chroma_sample.q = 0;
 
 		/* Demodulate U (multiply by cos) */
-		cint32_mul(&demod_u, &chroma_sample, &pal->carrier_lut[pal->carrier_phase]);
-		u = (int16_t)(demod_u.i >> 16);
+		int64_t u_temp = ((int64_t)chroma_sample.i * ref_cos) >> 32;
+		u = (int16_t)CLAMP(u_temp, INT16_MIN, INT16_MAX);
 
 		/* Demodulate V (multiply by sin, with PAL alternation) */
-		demod_v.i = -demod_u.q;
-		demod_v.q = demod_u.i;
-		v = (int16_t)((demod_v.i >> 16) * (pal->v_switch ? -1 : 1));
-
-		/* Advance carrier phase */
-		pal->carrier_phase = (pal->carrier_phase + 1) % pal->carrier_lut_size;
+		int64_t v_temp = ((int64_t)chroma_sample.i * ref_sin) >> 32;
+		v = (int16_t)(CLAMP(v_temp, INT16_MIN, INT16_MAX) * (pal->v_switch ? -1 : 1));
 
 		/* Convert YUV to RGB */
 		yuv_to_rgb(y, u, v, &r, &g, &b);
@@ -463,6 +506,10 @@ int rx_ntsc_init(rx_ntsc_decoder_t *ntsc, int sample_rate, int line_length)
 	ntsc->i_filter = NULL;
 	ntsc->q_filter = NULL;
 
+	/* Initialize burst PLL for phase-locked color demodulation */
+	pll_burst_init(&ntsc->burst_pll, sample_rate, ntsc->subcarrier_freq);
+	ntsc->use_burst_pll = 1;  /* Enable burst PLL by default */
+
 	/* TODO: Create chroma filters for I and Q */
 
 	return 0;
@@ -495,25 +542,44 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 	int16_t y, i, q, u, v;
 	uint8_t r, g, b;
 	cint32_t chroma_sample;
-	cint32_t demod;
+	int32_t ref_cos, ref_sin;
+
+	/* Process color burst to lock PLL */
+	if(ntsc->use_burst_pll)
+	{
+		pll_burst_process(&ntsc->burst_pll, line, ntsc->line_length);
+	}
 
 	for(x = 0; x < width; x++)
 	{
 		y = line[x];
 
+		/* Get reference from PLL or LUT */
+		if(ntsc->use_burst_pll && pll_burst_is_locked(&ntsc->burst_pll))
+		{
+			/* Use PLL-generated reference for better phase accuracy */
+			pll_burst_get_reference(&ntsc->burst_pll, &ref_cos, &ref_sin);
+		}
+		else
+		{
+			/* Fall back to LUT */
+			ref_cos = ntsc->carrier_lut[ntsc->carrier_phase].i;
+			ref_sin = ntsc->carrier_lut[ntsc->carrier_phase].q;
+			ntsc->carrier_phase = (ntsc->carrier_phase + 1) % ntsc->carrier_lut_size;
+		}
+
 		chroma_sample.i = line[x];
 		chroma_sample.q = 0;
 
-		/* Demodulate I and Q components */
-		cint32_mul(&demod, &chroma_sample, &ntsc->carrier_lut[ntsc->carrier_phase]);
-		i = (int16_t)(demod.i >> 16);
-		q = (int16_t)(demod.q >> 16);
+		/* Demodulate I and Q components using PLL reference */
+		int64_t i_temp = ((int64_t)chroma_sample.i * ref_cos) >> 32;
+		int64_t q_temp = ((int64_t)chroma_sample.i * ref_sin) >> 32;
+		i = (int16_t)CLAMP(i_temp, INT16_MIN, INT16_MAX);
+		q = (int16_t)CLAMP(q_temp, INT16_MIN, INT16_MAX);
 
 		/* Convert I/Q to U/V (simplified) */
 		u = (i + q) / 2;
 		v = (i - q) / 2;
-
-		ntsc->carrier_phase = (ntsc->carrier_phase + 1) % ntsc->carrier_lut_size;
 
 		yuv_to_rgb(y, u, v, &r, &g, &b);
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
