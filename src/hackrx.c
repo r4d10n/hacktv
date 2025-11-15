@@ -47,8 +47,11 @@ static void print_usage(void)
 		"      --gain <value>             RX gain in dB (0-70). Default: auto\n"
 		"\n"
 		"Output options:\n"
-		"  -o, --output <file>            Output video file (raw RGB)\n"
+		"  -o, --output <file>            Output video file\n"
 		"  -a, --audio-output <file>      Output audio file (raw PCM)\n"
+		"      --video-format <fmt>       Video format: rgb, yuv420, yuv422, pipe. Default: rgb\n"
+		"      --teletext-output <file>   Save captured teletext pages to file\n"
+		"      --nicam-output <file>      Save NICAM digital audio to file (PCM)\n"
 		"\n"
 		"Reception settings:\n"
 		"  -m, --mode <name>              TV mode (pal, ntsc, secam). Default: pal\n"
@@ -59,6 +62,8 @@ static void print_usage(void)
 		"      --audio-carrier <value>    Audio carrier frequency in Hz\n"
 		"      --audio-rate <value>       Audio output sample rate. Default: 48000\n"
 		"      --no-audio                 Disable audio decoding\n"
+		"      --nicam                    Enable NICAM digital audio decoding\n"
+		"      --teletext                 Enable teletext/VBI decoding\n"
 		"\n"
 		"Other options:\n"
 		"  -v, --verbose                  Enable verbose output\n"
@@ -78,17 +83,19 @@ static void print_usage(void)
 		"  vsb       - Vestigial sideband (terrestrial PAL/NTSC/SECAM)\n"
 		"\n"
 		"Examples:\n"
-		"  # Receive PAL signal from IQ file with VSB demodulation\n"
-		"  hackrx -i test.iq -o video.rgb -m pal -d vsb -s 16000000\n"
+		"  # Receive PAL signal from IQ file with YUV output\n"
+		"  hackrx -i test.iq -o video.yuv --video-format yuv420 -m pal -d fm -s 16000000\n"
 		"\n"
-		"  # Receive NTSC with FM demodulation and audio\n"
-		"  hackrx -i sat.iq -o video.rgb -a audio.pcm -m ntsc -d fm\n"
+		"  # Receive NTSC with audio from SDR hardware\n"
+		"  hackrx --sdr -f 474000000 -o video.yuv --video-format yuv420 -a audio.pcm -m ntsc -d vsb --gain 40\n"
 		"\n"
-		"  # Receive from SDR hardware (PlutoSDR or RTL-SDR)\n"
-		"  hackrx --sdr -f 474000000 -o video.rgb -m pal -d vsb --gain 40\n"
+		"  # Receive PAL with NICAM and Teletext\n"
+		"  hackrx --sdr -f 474000000 -o video.yuv --video-format yuv420 -m pal -d vsb \\\n"
+		"         --nicam --nicam-output nicam.pcm --teletext --teletext-output pages.txt --gain 45\n"
 		"\n"
-		"  # Receive from specific SDR device\n"
-		"  hackrx --sdr --device \"driver=rtlsdr\" -f 854000000 -o video.rgb -m ntsc\n"
+		"  # Pipe to ffmpeg for direct encoding\n"
+		"  hackrx -i test.iq -m pal -d fm --video-format pipe | \\\n"
+		"         ffmpeg -f rawvideo -pix_fmt rgb24 -s 720x576 -r 25 -i - -c:v libx264 output.mp4\n"
 		"\n"
 	);
 }
@@ -142,7 +149,6 @@ int main(int argc, char *argv[])
 	const char *demod_name = "fm";
 	const mode_info_t *mode;
 	FILE *input_fp = NULL;
-	FILE *output_fp = NULL;
 	FILE *audio_fp = NULL;
 	int16_t *iq_buffer;
 	int iq_buffer_size = 8192;
@@ -184,6 +190,11 @@ int main(int argc, char *argv[])
 		{ "sdr",           no_argument,       0, 'S' },
 		{ "device",        required_argument, 0, 'D' },
 		{ "gain",          required_argument, 0, 'g' },
+		{ "nicam",         no_argument,       0, 'M' },
+		{ "nicam-output",  required_argument, 0, 'O' },
+		{ "teletext",      no_argument,       0, 'T' },
+		{ "teletext-output", required_argument, 0, 'X' },
+		{ "video-format",  required_argument, 0, 'F' },
 		{ "verbose",       no_argument,       0, 'v' },
 		{ "help",          no_argument,       0, 'h' },
 		{ "version",       no_argument,       0, 'V' },
@@ -239,6 +250,34 @@ int main(int argc, char *argv[])
 				sdr_gain = atof(optarg);
 				break;
 #endif
+			case 'M':
+				conf.enable_nicam = 1;
+				break;
+			case 'O':
+				/* NICAM audio output file - handled later */
+				break;
+			case 'T':
+				conf.enable_teletext = 1;
+				break;
+			case 'X':
+				conf.teletext_output = optarg;
+				conf.enable_teletext = 1;
+				break;
+			case 'F':
+				if(strcasecmp(optarg, "rgb") == 0)
+					conf.video_output_format = VIDEO_OUT_RAW_RGB;
+				else if(strcasecmp(optarg, "yuv420") == 0)
+					conf.video_output_format = VIDEO_OUT_RAW_YUV420;
+				else if(strcasecmp(optarg, "yuv422") == 0)
+					conf.video_output_format = VIDEO_OUT_RAW_YUV422;
+				else if(strcasecmp(optarg, "pipe") == 0)
+					conf.video_output_format = VIDEO_OUT_PIPE;
+				else
+				{
+					fprintf(stderr, "Unknown video format: %s\n", optarg);
+					return 1;
+				}
+				break;
 			case 'v':
 				verbose = 1;
 				break;
@@ -278,11 +317,16 @@ int main(int argc, char *argv[])
 	}
 #endif
 
-	if(!output_file)
+	/* Set video output file in config */
+	if(output_file)
 	{
-		fprintf(stderr, "Error: Output file is required\n");
-		print_usage();
-		return 1;
+		conf.video_output_file = output_file;
+
+		/* Default to raw RGB if format not specified */
+		if(conf.video_output_format == VIDEO_OUT_NONE)
+		{
+			conf.video_output_format = VIDEO_OUT_RAW_RGB;
+		}
 	}
 
 	/* Find TV mode */
@@ -334,15 +378,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* Open output files */
-	output_fp = fopen(output_file, "wb");
-	if(!output_fp)
-	{
-		fprintf(stderr, "Error: Cannot open output file '%s'\n", output_file);
-		fclose(input_fp);
-		return 1;
-	}
-
+	/* Audio output file handling */
 	if(audio_file && conf.enable_audio)
 	{
 		audio_fp = fopen(audio_file, "wb");
@@ -357,7 +393,6 @@ int main(int argc, char *argv[])
 	{
 		fprintf(stderr, "Error: Failed to initialize receiver\n");
 		fclose(input_fp);
-		fclose(output_fp);
 		if(audio_fp) fclose(audio_fp);
 		return 1;
 	}
@@ -377,7 +412,6 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Error: Failed to allocate IQ buffer\n");
 		rx_free(&rx);
 		fclose(input_fp);
-		fclose(output_fp);
 		if(audio_fp) fclose(audio_fp);
 		return 1;
 	}
@@ -407,14 +441,9 @@ int main(int argc, char *argv[])
 		/* Check if we have a new frame to write */
 		if(rx.frames_decoded > last_frame_count)
 		{
-			uint32_t *framebuffer;
-			int width, height;
-
-			if(rx_get_frame(&rx, &framebuffer, &width, &height))
+			/* Frame writing is now handled automatically by video_output in receiver.c */
+			if(rx.frames_decoded > last_frame_count)
 			{
-				/* Write framebuffer to output file (raw RGB) */
-				size_t pixels = width * height;
-				fwrite(framebuffer, sizeof(uint32_t), pixels, output_fp);
 				frames_written++;
 				last_frame_count = rx.frames_decoded;
 
@@ -449,23 +478,30 @@ int main(int argc, char *argv[])
 
 	/* Cleanup */
 	free(iq_buffer);
-	rx_free(&rx);
+	rx_free(&rx);  /* This also closes video_output */
 	fclose(input_fp);
-	fclose(output_fp);
 	if(audio_fp) fclose(audio_fp);
 
-	printf("\nOutput written to:\n");
-	printf("  Video: %s (%dx%d raw RGB)\n", output_file, rx.frame_width, rx.frame_height);
-	if(audio_fp)
+	printf("\nReception complete!\n");
+	printf("  Frames decoded: %d\n", frames_written);
+	printf("  Samples processed: %lu\n", (unsigned long)total_samples);
+
+	if(output_file)
 	{
-		printf("  Audio: %s (%d Hz mono PCM)\n", audio_file, conf.audio_output_rate);
+		const char *pixel_format = (conf.video_output_format == VIDEO_OUT_RAW_YUV420) ? "yuv420p" :
+		                            (conf.video_output_format == VIDEO_OUT_RAW_YUV422) ? "yuv422p" : "rgb24";
+		printf("\nTo view the video:\n");
+		printf("  ffplay -f rawvideo -pixel_format %s -video_size %dx%d -framerate %.2f %s\n",
+			pixel_format,
+			rx.frame_width, rx.frame_height,
+			(double)conf.frame_rate.num / conf.frame_rate.den,
+			output_file);
 	}
 
-	printf("\nTo view the video, use:\n");
-	printf("  ffplay -f rawvideo -pixel_format rgb32 -video_size %dx%d -framerate %.2f %s\n",
-		rx.frame_width, rx.frame_height,
-		(double)conf.frame_rate.num / conf.frame_rate.den,
-		output_file);
+	if(conf.teletext_output)
+	{
+		printf("\nTeletext pages saved to: %s\n", conf.teletext_output);
+	}
 
 	return 0;
 }

@@ -15,6 +15,9 @@
 #include "video.h"
 #include "fir.h"
 #include "pll.h"
+#include "nicam_decoder.h"
+#include "teletext_decoder.h"
+#include "video_output.h"
 
 /* Demodulator types */
 typedef enum {
@@ -202,6 +205,18 @@ typedef struct {
 	double audio_carrier;
 	int audio_output_rate;
 
+	/* NICAM digital audio */
+	int enable_nicam;
+	double nicam_carrier;  /* 6.552 MHz for PAL, 5.85 MHz for NTSC (rare) */
+
+	/* Teletext / VBI */
+	int enable_teletext;
+	const char *teletext_output;  /* Output file for captured pages */
+
+	/* Video output */
+	video_output_format_t video_output_format;
+	const char *video_output_file;
+
 	/* RF tuning */
 	double rf_frequency;
 	double if_frequency;
@@ -226,6 +241,18 @@ typedef struct {
 
 	/* Audio decoder */
 	rx_audio_demod_t audio_demod;
+
+	/* NICAM decoder (digital audio) */
+	nicam_decoder_t nicam_decoder;
+	int enable_nicam;
+
+	/* Teletext decoder (VBI services) */
+	ttx_decoder_t teletext_decoder;
+	int enable_teletext;
+
+	/* Video output */
+	video_output_t video_output;
+	int enable_video_output;
 
 	/* Line buffer */
 	int16_t *line_buffer;

@@ -1085,6 +1085,64 @@ int rx_init(rx_t *rx, rx_config_t *conf)
 		}
 	}
 
+	/* Initialize NICAM decoder if enabled */
+	if(conf->enable_nicam)
+	{
+		double nicam_freq = (conf->nicam_carrier > 0) ? conf->nicam_carrier : 6552000.0;  /* Default PAL */
+
+		if(nicam_decoder_init(&rx->nicam_decoder, conf->sample_rate, nicam_freq) != 0)
+		{
+			fprintf(stderr, "Failed to initialize NICAM decoder\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		rx->enable_nicam = 1;
+		printf("NICAM decoder enabled (%.2f MHz carrier)\n", nicam_freq / 1e6);
+	}
+
+	/* Initialize Teletext decoder if enabled */
+	if(conf->enable_teletext)
+	{
+		int is_625_line = (conf->lines == 625);
+
+		if(ttx_decoder_init(&rx->teletext_decoder, conf->sample_rate, line_length, is_625_line) != 0)
+		{
+			fprintf(stderr, "Failed to initialize Teletext decoder\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		/* Enable raw output if specified */
+		if(conf->teletext_output)
+		{
+			/* Will save captured pages at end */
+		}
+
+		rx->enable_teletext = 1;
+		printf("Teletext decoder enabled\n");
+	}
+
+	/* Initialize video output if specified */
+	if(conf->video_output_file && conf->video_output_format != VIDEO_OUT_NONE)
+	{
+		if(video_output_init(&rx->video_output,
+		                      conf->video_output_format,
+		                      conf->video_output_file,
+		                      rx->frame_width,
+		                      rx->frame_height,
+		                      conf->frame_rate.num,
+		                      conf->frame_rate.den,
+		                      conf->interlaced) != 0)
+		{
+			fprintf(stderr, "Failed to initialize video output\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		rx->enable_video_output = 1;
+	}
+
 	printf("Receiver initialized:\n");
 	printf("  Sample rate: %d Hz\n", conf->sample_rate);
 	printf("  Video standard: %d lines, %s\n", conf->lines, conf->interlaced ? "interlaced" : "progressive");
@@ -1095,6 +1153,9 @@ int rx_init(rx_t *rx, rx_config_t *conf)
 	printf("  Demodulator: %s\n",
 		conf->demod_type == RX_DEMOD_FM ? "FM" :
 		conf->demod_type == RX_DEMOD_AM ? "AM" : "VSB");
+	printf("  NICAM: %s\n", rx->enable_nicam ? "enabled" : "disabled");
+	printf("  Teletext: %s\n", rx->enable_teletext ? "enabled" : "disabled");
+	printf("  Video output: %s\n", rx->enable_video_output ? video_output_format_name(conf->video_output_format) : "disabled");
 
 	return 0;
 }
@@ -1110,6 +1171,29 @@ void rx_free(rx_t *rx)
 	rx_secam_free(&rx->secam_decoder);
 
 	rx_audio_free(&rx->audio_demod);
+
+	/* Free NICAM decoder */
+	if(rx->enable_nicam)
+	{
+		nicam_decoder_free(&rx->nicam_decoder);
+	}
+
+	/* Free Teletext decoder and save pages if requested */
+	if(rx->enable_teletext)
+	{
+		if(rx->conf.teletext_output)
+		{
+			ttx_decoder_save_pages(&rx->teletext_decoder, rx->conf.teletext_output);
+		}
+		ttx_decoder_free(&rx->teletext_decoder);
+	}
+
+	/* Close video output */
+	if(rx->enable_video_output)
+	{
+		video_output_close(&rx->video_output);
+		video_output_free(&rx->video_output);
+	}
 
 	if(rx->line_buffer)
 	{
@@ -1175,6 +1259,19 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 		if(line_start && rx->line_buffer_pos > 0)
 		{
 			int line_num = rx->sync.current_line;
+
+			/* Process Teletext from VBI lines */
+			if(rx->enable_teletext)
+			{
+				int is_625 = (rx->conf.lines == 625);
+				int vbi_start = is_625 ? TTX_LINE_START_625 : TTX_LINE_START_525;
+				int vbi_end = is_625 ? TTX_LINE_END_625 : TTX_LINE_END_525;
+
+				if(line_num >= vbi_start && line_num <= vbi_end)
+				{
+					ttx_decoder_process_line(&rx->teletext_decoder, rx->line_buffer, line_num);
+				}
+			}
 
 			/* Only process active video lines */
 			if(line_num >= 23 && line_num < rx->frame_height + 23)
@@ -1295,6 +1392,18 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 			if(line_num == 0)
 			{
 				rx->frames_decoded++;
+
+			/* Write frame to video output if enabled */
+			if(rx->enable_video_output)
+			{
+				video_output_write_frame(&rx->video_output, rx->framebuffer);
+			}
+
+			/* Save teletext pages periodically (every 100 frames ~4 seconds) */
+			if(rx->enable_teletext && rx->conf.teletext_output && (rx->frames_decoded % 100 == 0))
+			{
+				ttx_decoder_save_pages(&rx->teletext_decoder, rx->conf.teletext_output);
+			}
 			}
 		}
 
