@@ -108,6 +108,10 @@ typedef struct {
 	/* PLL for burst lock */
 	pll_burst_t burst_pll;
 	int use_burst_pll;        /* Enable burst PLL mode */
+
+	/* 1H delay line for comb filter */
+	int16_t *prev_line;
+	int prev_line_length;
 } rx_pal_decoder_t;
 
 /* NTSC colour decoder */

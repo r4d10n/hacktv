@@ -317,6 +317,42 @@ int rx_sync_process(rx_sync_t *sync, int16_t sample, int *line_start, int *field
 /* PAL Colour Decoder Implementation                                     */
 /* =======================================================================*/
 
+/* Simple chroma bandpass filter (centered at subcarrier frequency) */
+/* This separates chroma from luma using a basic 3-tap bandpass */
+static int16_t chroma_bandpass(int16_t *line, int x, int taps)
+{
+	int32_t sum = 0;
+
+	/* Simple 3-tap bandpass: [1, -2, 1] pattern extracts high frequencies */
+	/* This is a simplified chroma extraction - proper implementation would use FIR */
+	if(x > 0 && x < taps - 1)
+	{
+		sum = (int32_t)line[x - 1] - 2 * (int32_t)line[x] + (int32_t)line[x + 1];
+		return (int16_t)CLAMP(sum, INT16_MIN, INT16_MAX);
+	}
+
+	return line[x];
+}
+
+/* PAL comb filter using 1H (one line) delay */
+/* This exploits PAL's V-phase alternation to separate chroma from luma */
+static int16_t chroma_comb_filter(int16_t *curr_line, int16_t *prev_line, int x, int line_length)
+{
+	int32_t diff;
+
+	if(prev_line && x < line_length)
+	{
+		/* Subtract previous line from current line */
+		/* PAL chroma inverts phase every line, so this enhances chroma while canceling luma */
+		diff = (int32_t)curr_line[x] - (int32_t)prev_line[x];
+		/* Divide by 2 to normalize amplitude */
+		return (int16_t)CLAMP(diff / 2, INT16_MIN, INT16_MAX);
+	}
+
+	/* Fallback for first line or out of bounds */
+	return curr_line[x];
+}
+
 int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 {
 	int i;
@@ -357,6 +393,15 @@ int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 	pll_burst_init(&pal->burst_pll, sample_rate, pal->subcarrier_freq);
 	pal->use_burst_pll = 1;  /* Enable burst PLL by default */
 
+	/* Allocate 1H delay line for comb filter */
+	pal->prev_line_length = line_length;
+	pal->prev_line = calloc(line_length, sizeof(int16_t));
+	if(!pal->prev_line)
+	{
+		free(pal->carrier_lut);
+		return -1;
+	}
+
 	/* TODO: Create chroma bandpass filters */
 	/* U and V are at ±1.3 MHz around the subcarrier */
 
@@ -382,6 +427,12 @@ void rx_pal_free(rx_pal_decoder_t *pal)
 		fir_int16_free(pal->v_filter);
 		pal->v_filter = NULL;
 	}
+
+	if(pal->prev_line)
+	{
+		free(pal->prev_line);
+		pal->prev_line = NULL;
+	}
 }
 
 void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out, int width)
@@ -389,7 +440,7 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 	int x;
 	int16_t y, u, v;
 	uint8_t r, g, b;
-	cint32_t chroma_sample;
+	int16_t chroma;
 	int32_t ref_cos, ref_sin;
 
 	/* Process color burst to lock PLL */
@@ -400,7 +451,18 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 
 	for(x = 0; x < width; x++)
 	{
-		/* Extract luminance (Y) - this is the baseband video */
+		/* CRITICAL FIX: Extract chroma using 1H comb filter */
+		/* This exploits PAL V-phase alternation for better Y/C separation */
+		chroma = chroma_comb_filter(line, pal->prev_line, x, pal->line_length);
+
+		/* If comb filter not available (first line), use bandpass filter */
+		if(!pal->prev_line)
+		{
+			chroma = chroma_bandpass(line, x, width);
+		}
+
+		/* Extract luminance (Y) by taking the baseband signal */
+		/* Simple approach: use original signal as luma (chroma averages to zero over time) */
 		y = line[x];
 
 		/* Get reference from PLL or LUT */
@@ -417,23 +479,29 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 			pal->carrier_phase = (pal->carrier_phase + 1) % pal->carrier_lut_size;
 		}
 
-		/* Extract chrominance by multiplying with subcarrier */
-		chroma_sample.i = line[x];
-		chroma_sample.q = 0;
-
-		/* Demodulate U (multiply by cos) */
-		int64_t u_temp = ((int64_t)chroma_sample.i * ref_cos) >> 32;
+		/* CRITICAL FIX: Demodulate U with proper gain */
+		/* Changed from >>32 to >>16 for less amplitude loss */
+		/* Apply 3x gain boost for proper color saturation */
+		int64_t u_temp = ((int64_t)chroma * ref_cos) >> 16;
+		u_temp = (u_temp * 3);  /* 3x chroma gain */
 		u = (int16_t)CLAMP(u_temp, INT16_MIN, INT16_MAX);
 
-		/* Demodulate V (multiply by sin, with PAL alternation) */
-		int64_t v_temp = ((int64_t)chroma_sample.i * ref_sin) >> 32;
-		v = (int16_t)(CLAMP(v_temp, INT16_MIN, INT16_MAX) * (pal->v_switch ? -1 : 1));
+		/* CRITICAL FIX: Demodulate V with proper gain and PAL alternation */
+		int64_t v_temp = ((int64_t)chroma * ref_sin) >> 16;
+		v_temp = (v_temp * 3) * (pal->v_switch ? -1 : 1);  /* 3x gain + PAL V-switch */
+		v = (int16_t)CLAMP(v_temp, INT16_MIN, INT16_MAX);
 
 		/* Convert YUV to RGB */
 		yuv_to_rgb(y, u, v, &r, &g, &b);
 
 		/* Pack into 32-bit RGB */
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
+	}
+
+	/* Save current line for next iteration (comb filter delay line) */
+	if(pal->prev_line && pal->line_length > 0)
+	{
+		memcpy(pal->prev_line, line, pal->line_length * sizeof(int16_t));
 	}
 
 	/* Toggle V switch for next line (PAL alternation) */
@@ -457,10 +525,15 @@ void yuv_to_rgb(int16_t y, int16_t u, int16_t v, uint8_t *r, uint8_t *g, uint8_t
 	g_tmp = y - ((u * 12943) >> 15) - ((v * 19071) >> 15);
 	b_tmp = y + ((u * 66607) >> 15);  /* 2.032 * 32768 */
 
-	/* Scale from 16-bit signed to 8-bit unsigned */
-	r_tmp = (r_tmp + INT16_MAX) >> 8;
-	g_tmp = (g_tmp + INT16_MAX) >> 8;
-	b_tmp = (b_tmp + INT16_MAX) >> 8;
+	/* CRITICAL FIX: Scale from 16-bit signed to 8-bit unsigned with ITU-R BT.601 levels */
+	/* ITU-R BT.601 specifies video levels: 16-235 for Y, 16-240 for U/V */
+	/* We want black (Y=-32768) to map to 16, white (Y=+32767) to map to 235 */
+
+	/* Map -32768 to +32767 range to 16-235 range */
+	/* Formula: output = 16 + ((input + 32768) * 219) / 65535 */
+	r_tmp = 16 + (((r_tmp + 32768) * 219) / 65535);
+	g_tmp = 16 + (((g_tmp + 32768) * 219) / 65535);
+	b_tmp = 16 + (((b_tmp + 32768) * 219) / 65535);
 
 	*r = (uint8_t)CLAMP(r_tmp, 0, 255);
 	*g = (uint8_t)CLAMP(g_tmp, 0, 255);
@@ -541,7 +614,7 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 	int x;
 	int16_t y, i, q, u, v;
 	uint8_t r, g, b;
-	cint32_t chroma_sample;
+	int16_t chroma;
 	int32_t ref_cos, ref_sin;
 
 	/* Process color burst to lock PLL */
@@ -552,6 +625,10 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 
 	for(x = 0; x < width; x++)
 	{
+		/* CRITICAL FIX: Extract chroma using bandpass filter */
+		chroma = chroma_bandpass(line, x, width);
+
+		/* Extract luminance from baseband */
 		y = line[x];
 
 		/* Get reference from PLL or LUT */
@@ -568,13 +645,14 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 			ntsc->carrier_phase = (ntsc->carrier_phase + 1) % ntsc->carrier_lut_size;
 		}
 
-		chroma_sample.i = line[x];
-		chroma_sample.q = 0;
-
-		/* Demodulate I and Q components using PLL reference */
-		int64_t i_temp = ((int64_t)chroma_sample.i * ref_cos) >> 32;
-		int64_t q_temp = ((int64_t)chroma_sample.i * ref_sin) >> 32;
+		/* CRITICAL FIX: Demodulate I and Q with proper gain */
+		/* Changed from >>32 to >>16, apply 3x gain */
+		int64_t i_temp = ((int64_t)chroma * ref_cos) >> 16;
+		i_temp = i_temp * 3;
 		i = (int16_t)CLAMP(i_temp, INT16_MIN, INT16_MAX);
+
+		int64_t q_temp = ((int64_t)chroma * ref_sin) >> 16;
+		q_temp = q_temp * 3;
 		q = (int16_t)CLAMP(q_temp, INT16_MIN, INT16_MAX);
 
 		/* Convert I/Q to U/V (simplified) */
