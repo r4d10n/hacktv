@@ -458,11 +458,15 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 
 	for(x = 0; x < width; x++)
 	{
-		/* Temporarily use simple bandpass only to debug buffer issues */
-		chroma = chroma_bandpass(line, x, width);
+		/* CRITICAL FIX: Extract chroma using 1H comb filter */
+		/* Now using properly offset prev_line for sample-perfect alignment */
+		chroma = chroma_comb_filter(line, pal->prev_line_offset, x, width);
 
-		/* TODO: Re-enable comb filter once buffer issues are resolved */
-		//chroma = chroma_comb_filter(line, pal->prev_line, x, width);
+		/* If comb filter not available (first line), use bandpass filter */
+		if(!pal->prev_line_offset)
+		{
+			chroma = chroma_bandpass(line, x, width);
+		}
 
 		/* Extract luminance (Y) by taking the baseband signal */
 		/* Simple approach: use original signal as luma (chroma averages to zero over time) */
@@ -500,11 +504,8 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
 	}
 
-	/* TODO: Re-enable prev_line saving once buffer issues are resolved */
-	//if(pal->prev_line && width > 0 && width <= pal->prev_line_length)
-	//{
-	//	memcpy(pal->prev_line, line, width * sizeof(int16_t));
-	//}
+	/* Note: prev_line is now saved at higher level with FULL line buffer */
+	/* See rx_process_samples() for correct memcpy implementation */
 
 	/* Toggle V switch for next line (PAL alternation) */
 	pal->v_switch = !pal->v_switch;
@@ -639,18 +640,25 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 
 	for(x = 0; x < width; x++)
 	{
-		/* Temporarily use simple bandpass only to debug buffer issues */
-		chroma = chroma_bandpass(line, x, width);
-		y = line[x];
+		/* CRITICAL FIX: NTSC comb filter for Y/C separation */
+		/* NTSC subcarrier inverts 180° on successive lines */
+		/* Luma = (current + previous) / 2, Chroma = (current - previous) / 2 */
+		/* Now using properly offset prev_line for sample-perfect alignment */
+		if(ntsc->prev_line_offset && x < width)
+		{
+			int32_t curr = line[x];
+			int32_t prev = ntsc->prev_line_offset[x];
 
-		/* TODO: Re-enable comb filter once buffer issues are resolved */
-		//if(ntsc->prev_line && x < width)
-		//{
-		//	int32_t curr = line[x];
-		//	int32_t prev = ntsc->prev_line[x];
-		//	y = (int16_t)((curr + prev) / 2);
-		//	chroma = (int16_t)((curr - prev) / 2);
-		//}
+			/* Comb filter: average for luma, difference for chroma */
+			y = (int16_t)((curr + prev) / 2);
+			chroma = (int16_t)((curr - prev) / 2);
+		}
+		else
+		{
+			/* Fall back to simple bandpass on first line */
+			chroma = chroma_bandpass(line, x, width);
+			y = line[x];
+		}
 
 		/* Get reference from PLL or LUT */
 		if(ntsc->use_burst_pll && pll_burst_is_locked(&ntsc->burst_pll))
@@ -689,11 +697,8 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
 	}
 
-	/* TODO: Re-enable prev_line saving once buffer issues are resolved */
-	//if(ntsc->prev_line && width > 0 && width <= ntsc->prev_line_length)
-	//{
-	//	memcpy(ntsc->prev_line, line, width * sizeof(int16_t));
-	//}
+	/* Note: prev_line is now saved at higher level with FULL line buffer */
+	/* See rx_process_samples() for correct memcpy implementation */
 }
 
 /* =======================================================================*/
@@ -1124,20 +1129,42 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 				switch(rx->conf.colour_type)
 				{
 					case RX_COLOUR_PAL:
-						/* TODO: Re-enable PLL once buffer issues are resolved */
-						//if(rx->pal_decoder.use_burst_pll)
-						//{
-						//	pll_burst_process(&rx->pal_decoder.burst_pll, rx->line_buffer, rx->pal_decoder.line_length);
-						//}
+						if(rx->pal_decoder.use_burst_pll)
+						{
+							pll_burst_process(&rx->pal_decoder.burst_pll, rx->line_buffer, rx->pal_decoder.line_length);
+						}
+
+						/* Offset prev_line to align with current line's active video start */
+						/* This ensures sample-perfect alignment for the comb filter */
+						if(rx->pal_decoder.prev_line && active_start < rx->pal_decoder.prev_line_length)
+						{
+							rx->pal_decoder.prev_line_offset = rx->pal_decoder.prev_line + active_start;
+						}
+						else
+						{
+							rx->pal_decoder.prev_line_offset = NULL;
+						}
+
 						/* Pass active video portion to decoder */
 						rx_pal_decode_line(&rx->pal_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_NTSC:
-						/* TODO: Re-enable PLL once buffer issues are resolved */
-						//if(rx->ntsc_decoder.use_burst_pll)
-						//{
-						//	pll_burst_process(&rx->ntsc_decoder.burst_pll, rx->line_buffer, rx->ntsc_decoder.line_length);
-						//}
+						if(rx->ntsc_decoder.use_burst_pll)
+						{
+							pll_burst_process(&rx->ntsc_decoder.burst_pll, rx->line_buffer, rx->ntsc_decoder.line_length);
+						}
+
+						/* Offset prev_line to align with current line's active video start */
+						/* This ensures sample-perfect alignment for the comb filter */
+						if(rx->ntsc_decoder.prev_line && active_start < rx->ntsc_decoder.prev_line_length)
+						{
+							rx->ntsc_decoder.prev_line_offset = rx->ntsc_decoder.prev_line + active_start;
+						}
+						else
+						{
+							rx->ntsc_decoder.prev_line_offset = NULL;
+						}
+
 						/* Pass active video portion to decoder */
 						rx_ntsc_decode_line(&rx->ntsc_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
@@ -1170,6 +1197,27 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 						}
 						break;
 				}
+			}
+
+			/* CRITICAL FIX: Save ENTIRE line for comb filter delay line */
+			/* Must copy FULL line buffer (including sync and burst) AFTER processing */
+			/* but BEFORE resetting line_buffer_pos */
+			switch(rx->conf.colour_type)
+			{
+				case RX_COLOUR_PAL:
+					if(rx->pal_decoder.prev_line && rx->line_buffer_pos <= rx->pal_decoder.prev_line_length)
+					{
+						memcpy(rx->pal_decoder.prev_line, rx->line_buffer, rx->line_buffer_pos * sizeof(int16_t));
+					}
+					break;
+				case RX_COLOUR_NTSC:
+					if(rx->ntsc_decoder.prev_line && rx->line_buffer_pos <= rx->ntsc_decoder.prev_line_length)
+					{
+						memcpy(rx->ntsc_decoder.prev_line, rx->line_buffer, rx->line_buffer_pos * sizeof(int16_t));
+					}
+					break;
+				default:
+					break;
 			}
 
 			/* Reset line buffer */

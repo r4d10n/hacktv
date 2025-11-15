@@ -110,7 +110,8 @@ typedef struct {
 	int use_burst_pll;        /* Enable burst PLL mode */
 
 	/* 1H delay line for comb filter */
-	int16_t *prev_line;
+	int16_t *prev_line;           /* Full line buffer storage */
+	int16_t *prev_line_offset;    /* Offset pointer for active video alignment */
 	int prev_line_length;
 } rx_pal_decoder_t;
 
@@ -138,7 +139,8 @@ typedef struct {
 	int use_burst_pll;        /* Enable burst PLL mode */
 
 	/* 1H delay line for comb filter */
-	int16_t *prev_line;
+	int16_t *prev_line;           /* Full line buffer storage */
+	int16_t *prev_line_offset;    /* Offset pointer for active video alignment */
 	int prev_line_length;
 } rx_ntsc_decoder_t;
 
