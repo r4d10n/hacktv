@@ -391,7 +391,7 @@ int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
 
 	/* Initialize burst PLL for phase-locked color demodulation */
 	pll_burst_init(&pal->burst_pll, sample_rate, pal->subcarrier_freq);
-	pal->use_burst_pll = 1;  /* Enable burst PLL by default */
+	pal->use_burst_pll = 1;  /* Enable burst PLL */
 
 	/* Allocate 1H delay line for comb filter */
 	pal->prev_line_length = line_length;
@@ -481,7 +481,6 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 
 		/* CRITICAL FIX: Demodulate U with proper gain */
 		/* Changed from >>32 to >>16 for less amplitude loss */
-		/* Apply 3x gain boost for proper color saturation */
 		int64_t u_temp = ((int64_t)chroma * ref_cos) >> 16;
 		u_temp = (u_temp * 3);  /* 3x chroma gain */
 		u = (int16_t)CLAMP(u_temp, INT16_MIN, INT16_MAX);
@@ -646,13 +645,12 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 		}
 
 		/* CRITICAL FIX: Demodulate I and Q with proper gain */
-		/* Changed from >>32 to >>16, apply 3x gain */
 		int64_t i_temp = ((int64_t)chroma * ref_cos) >> 16;
-		i_temp = i_temp * 3;
+		i_temp = i_temp * 3;  /* 3x chroma gain */
 		i = (int16_t)CLAMP(i_temp, INT16_MIN, INT16_MAX);
 
 		int64_t q_temp = ((int64_t)chroma * ref_sin) >> 16;
-		q_temp = q_temp * 3;
+		q_temp = q_temp * 3;  /* 3x chroma gain */
 		q = (int16_t)CLAMP(q_temp, INT16_MIN, INT16_MAX);
 
 		/* Convert I/Q to U/V (simplified) */

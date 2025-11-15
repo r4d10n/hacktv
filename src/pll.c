@@ -203,12 +203,17 @@ void pll_burst_process(pll_burst_t *pll, int16_t *line, int line_length)
 	/* For a locked PLL, burst should be at a specific phase */
 	double burst_phase = atan2(q_avg, i_avg);
 
-	/* For PAL, burst is at 135° (swinging ±45°) */
-	/* For NTSC, burst is at 180° */
-	/* Simplified: use burst phase directly as error */
+	/* Sync LUT phase to match burst phase */
+	/* This ensures our reference signals are aligned with the carrier */
+	double current_lut_angle = 2.0 * M_PI * (pll->lut_phase % 1024) / 1024.0;
+	double phase_error = burst_phase - current_lut_angle;
+
+	/* Normalize phase error to [-π, π] */
+	while(phase_error > M_PI) phase_error -= 2.0 * M_PI;
+	while(phase_error < -M_PI) phase_error += 2.0 * M_PI;
 
 	/* Update PLL based on phase error */
-	double error = burst_phase;
+	double error = phase_error;
 
 	/* Loop filter */
 	pll->phase_error += error * pll->ki;
@@ -222,6 +227,10 @@ void pll_burst_process(pll_burst_t *pll, int16_t *line, int line_length)
 	double max_freq = pll->nominal_frequency * 1.001;
 	if(pll->frequency < min_freq) pll->frequency = min_freq;
 	if(pll->frequency > max_freq) pll->frequency = max_freq;
+
+	/* Apply phase correction to sync LUT phase with burst */
+	double phase_correction_samples = (error / (2.0 * M_PI)) * (1024.0 / (pll->frequency / pll->sample_rate));
+	pll->lut_phase += (int)phase_correction_samples;
 
 	/* Estimate SNR from burst magnitude */
 	double avg_mag = mag_sum / count;
@@ -240,8 +249,9 @@ void pll_burst_process(pll_burst_t *pll, int16_t *line, int line_length)
 
 void pll_burst_get_reference(pll_burst_t *pll, int32_t *cos_out, int32_t *sin_out)
 {
-	/* Return current reference signals */
+	/* Return reference signals directly (burst at 0° aligns with U-axis) */
 	int lut_idx = pll->lut_phase % 1024;
+
 	*cos_out = pll->cos_lut[lut_idx];
 	*sin_out = pll->sin_lut[lut_idx];
 

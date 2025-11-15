@@ -53,21 +53,24 @@ def generate_pal_line(line_num, pattern='colorbars'):
     # Back porch (blanking)
     line[SYNC_SAMPLES:ACTIVE_START] = BLANKING_LEVEL
 
-    # Color burst (10 cycles of subcarrier at burst phase)
+    # Color burst (10 cycles of subcarrier - continuous phase with chroma carrier)
     if pattern != 'mono':
-        burst_phase = 0 if (line_num % 2) == 0 else np.pi  # PAL V-switch
-        t_burst = np.arange(BURST_LENGTH) / SAMPLE_RATE
-        burst_signal = np.sin(2 * np.pi * SUBCARRIER_FREQ * t_burst + burst_phase)
+        # Calculate burst position in line (continuous carrier phase)
+        burst_start_sample = SYNC_SAMPLES + BURST_START
+        t_burst = (burst_start_sample + np.arange(BURST_LENGTH)) / SAMPLE_RATE
+
+        # Simplified: Use 0° burst (on U-axis) for testing
+        # This should align directly with the cos/sin references in the decoder
+        burst_phase_offset = 0.0  # 0° burst for simple alignment
+        burst_signal = np.sin(2 * np.pi * SUBCARRIER_FREQ * t_burst + burst_phase_offset)
         burst_amplitude = 8000  # Burst amplitude
-        line[SYNC_SAMPLES + BURST_START:SYNC_SAMPLES + BURST_START + BURST_LENGTH] = \
+        line[burst_start_sample:burst_start_sample + BURST_LENGTH] = \
             BLANKING_LEVEL + (burst_signal * burst_amplitude).astype(np.int16)
 
     # Active video
     if pattern == 'colorbars':
         # Generate color bars with chroma
         bar_width = ACTIVE_WIDTH // 8
-        t_active = np.arange(ACTIVE_WIDTH) / SAMPLE_RATE
-        subcarrier = 2 * np.pi * SUBCARRIER_FREQ * t_active
 
         for i, (y, u, v) in enumerate(COLOR_BARS):
             start = ACTIVE_START + i * bar_width
@@ -77,11 +80,13 @@ def generate_pal_line(line_num, pattern='colorbars'):
             # Luminance (Y)
             luma = np.full(width, y, dtype=np.int16)
 
-            # Chrominance modulated onto subcarrier
+            # Chrominance modulated onto subcarrier (continuous phase, NO offset)
+            # The burst establishes the reference, but chroma is on unshifted carrier
             # PAL: U modulated on cos, V on sin with line alternation
-            t = t_active[:width]
-            carrier_cos = np.cos(subcarrier[:width])
-            carrier_sin = np.sin(subcarrier[:width])
+            t = (start + np.arange(width)) / SAMPLE_RATE
+            carrier_phase = 2 * np.pi * SUBCARRIER_FREQ * t  # No phase offset
+            carrier_cos = np.cos(carrier_phase)
+            carrier_sin = np.sin(carrier_phase)
 
             # PAL V-switch: V phase alternates every line
             v_phase = 1 if (line_num % 2) == 0 else -1
