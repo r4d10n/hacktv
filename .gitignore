@@ -4,3 +4,12 @@
 build_win64
 hacktv
 hackrx
+
+# Test artifacts
+*.iq
+*.rgb
+*.ppm
+test_rx_validation
+test_baseband_output.*
+test_output.*
+test_pal_synthetic.*
