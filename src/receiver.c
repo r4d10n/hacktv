@@ -121,6 +121,15 @@ int16_t rx_am_demod_process(rx_am_demod_t *demod, int16_t i, int16_t q)
 	int32_t abs_i = abs(i);
 	int32_t abs_q = abs(q);
 
+	/* IMPORTANT FIX: If Q is very small compared to I, treat as baseband */
+	/* Baseband signals have Q=0, and we need to preserve sign for sync */
+	if(abs_q < (abs_i / 20))
+	{
+		/* This is a baseband signal - return I directly to preserve sign */
+		return i;
+	}
+
+	/* Standard AM envelope detection for modulated signals */
 	if(abs_i > abs_q)
 	{
 		magnitude = abs_i + (abs_q >> 1);
@@ -228,27 +237,27 @@ int rx_sync_init(rx_sync_t *sync, int sample_rate, int line_length, int frame_li
 
 int rx_sync_process(rx_sync_t *sync, int16_t sample, int *line_start, int *field)
 {
-	int sync_detected = 0;
-
 	*line_start = 0;
 	*field = sync->current_field;
 
-	/* Simple AGC */
+	/* Improved AGC - accumulate absolute values */
 	sync->agc_accumulator += abs(sample);
-	if(sync->samples_since_sync % 1000 == 0)
+
+	/* Update AGC every 100 samples for faster adaptation */
+	if(sync->samples_since_sync % 100 == 0 && sync->agc_accumulator > 0)
 	{
-		sync->agc_level = sync->agc_accumulator / 1000;
+		sync->agc_level = sync->agc_accumulator / 100;
 		sync->agc_accumulator = 0;
 
-		/* Update sync threshold */
-		sync->sync_level = -(sync->agc_level * 3) / 4;
+		/* Update sync threshold - sync pulses are most negative */
+		/* Set threshold at 60% of peak signal level */
+		sync->sync_level = -(sync->agc_level * 6) / 10;
 		sync->blanking_level = -sync->agc_level / 4;
 	}
 
 	/* Detect sync pulse (signal goes below threshold) */
 	if(sample < sync->sync_level && sync->samples_since_sync > sync->line_length / 2)
 	{
-		sync_detected = 1;
 		*line_start = 1;
 
 		/* Check if this is a vsync (long sync pulse) */
@@ -863,24 +872,50 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 				int fb_line = line_num - 23;
 				uint32_t *fb_ptr = &rx->framebuffer[fb_line * rx->frame_width];
 
-				/* Decode colour */
+				/* Calculate where active video starts in line buffer */
+				/* Skip sync pulse (~75 samples) and back porch (~82 samples) */
+				int active_start = 157;  /* ~10% of 1024-sample line */
+				int active_width = rx->frame_width;
+
+				/* Make sure we don't go past the line buffer */
+				if(active_start + active_width > rx->line_buffer_pos)
+				{
+					active_width = rx->line_buffer_pos - active_start;
+				}
+
+				/* Decode colour from active video portion only */
 				switch(rx->conf.colour_type)
 				{
 					case RX_COLOUR_PAL:
-						rx_pal_decode_line(&rx->pal_decoder, rx->line_buffer, fb_ptr, rx->frame_width);
+						rx_pal_decode_line(&rx->pal_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_NTSC:
-						rx_ntsc_decode_line(&rx->ntsc_decoder, rx->line_buffer, fb_ptr, rx->frame_width);
+						rx_ntsc_decode_line(&rx->ntsc_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_SECAM:
-						rx_secam_decode_line(&rx->secam_decoder, rx->line_buffer, fb_ptr, rx->frame_width);
+						rx_secam_decode_line(&rx->secam_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_NONE:
 					default:
-						/* Monochrome - just convert Y to grayscale */
-						for(int x = 0; x < rx->frame_width && x < rx->line_buffer_pos; x++)
+						/* Monochrome - convert active video portion only */
+						for(int x = 0; x < active_width && x < rx->frame_width; x++)
 						{
-							uint8_t gray = (uint8_t)CLAMP((rx->line_buffer[x] + 32768) >> 8, 0, 255);
+							int16_t y = rx->line_buffer[active_start + x];
+
+							/* Map video levels to grayscale (ITU-R BT.601) */
+							/* Sync level (-32000) should be black (16) */
+							/* Black level (0) should be dark (16) */
+							/* White level (+32000) should be white (235) */
+							/* Map the range -32768..+32767 to 16..235 for proper video levels */
+
+							/* First, clamp to active video range */
+							int32_t clamped = CLAMP(y, -32768, 32767);
+
+							/* Map to 16-235 range (video levels) */
+							/* Formula: output = 16 + (input + 32768) * (235 - 16) / 65535 */
+							int32_t scaled = 16 + ((clamped + 32768) * 219) / 65535;
+							uint8_t gray = (uint8_t)CLAMP(scaled, 0, 255);
+
 							fb_ptr[x] = (0xFF << 24) | (gray << 16) | (gray << 8) | gray;
 						}
 						break;
