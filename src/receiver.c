@@ -166,6 +166,14 @@ int rx_vsb_demod_init(rx_vsb_demod_t *demod, int sample_rate, double carrier_fre
 	demod->carrier_phase.q = 0;
 	demod->filter = NULL;
 
+	/* Initialize adaptive AGC */
+	demod->enable_agc = 1;  /* Enable by default */
+	demod->agc_gain = 1.0;  /* Start with unity gain */
+	demod->agc_target = 20000.0;  /* Target signal level (out of 32767) */
+	demod->agc_attack = 0.001;  /* Fast attack for signal increases */
+	demod->agc_decay = 0.00001;  /* Slow decay for signal decreases */
+	demod->agc_peak_level = 0;
+
 	/* TODO: Create lowpass filter for baseband */
 
 	return 0;
@@ -197,6 +205,48 @@ int16_t rx_vsb_demod_process(rx_vsb_demod_t *demod, int16_t i, int16_t q)
 
 	/* Take I component (real part) */
 	output = (int16_t)(mixed.i >> 16);
+
+	/* Apply adaptive AGC */
+	if(demod->enable_agc)
+	{
+		/* Track peak level */
+		int32_t abs_level = abs(output);
+		if(abs_level > demod->agc_peak_level)
+		{
+			demod->agc_peak_level = abs_level;
+		}
+		else
+		{
+			/* Slow decay */
+			demod->agc_peak_level = (int32_t)(demod->agc_peak_level * (1.0 - demod->agc_decay));
+		}
+
+		/* Adjust gain based on peak level */
+		if(demod->agc_peak_level > 100)  /* Avoid division by zero */
+		{
+			double desired_gain = demod->agc_target / demod->agc_peak_level;
+
+			/* Smooth gain changes */
+			if(desired_gain < demod->agc_gain)
+			{
+				/* Fast attack (reduce gain quickly) */
+				demod->agc_gain += (desired_gain - demod->agc_gain) * demod->agc_attack;
+			}
+			else
+			{
+				/* Slow decay (increase gain slowly) */
+				demod->agc_gain += (desired_gain - demod->agc_gain) * demod->agc_decay * 10.0;
+			}
+
+			/* Clamp gain to reasonable range (0.1x to 10x) */
+			if(demod->agc_gain < 0.1) demod->agc_gain = 0.1;
+			if(demod->agc_gain > 10.0) demod->agc_gain = 10.0;
+		}
+
+		/* Apply gain */
+		int32_t gained = (int32_t)(output * demod->agc_gain);
+		output = (int16_t)CLAMP(gained, INT16_MIN, INT16_MAX);
+	}
 
 	/* Apply lowpass filter */
 	/* TODO: Apply FIR filter when implemented */
@@ -806,9 +856,79 @@ int rx_secam_init(rx_secam_decoder_t *secam, int sample_rate, int line_length)
 		return -1;
 	}
 
-	/* TODO: Initialize Dr/Db bandpass filters */
-	secam->dr_filter = NULL;
-	secam->db_filter = NULL;
+	/* Initialize Dr/Db bandpass filters for improved color separation */
+	/* Dr filter: centered at 4.40625 MHz, bandwidth ~500 kHz */
+	/* Db filter: centered at 4.25 MHz, bandwidth ~500 kHz */
+
+	/* Create simple bandpass FIR filters */
+	int filter_taps = 65;
+	double *dr_taps = malloc(filter_taps * sizeof(double));
+	double *db_taps = malloc(filter_taps * sizeof(double));
+
+	if(!dr_taps || !db_taps)
+	{
+		if(dr_taps) free(dr_taps);
+		if(db_taps) free(db_taps);
+		rx_secam_free(secam);
+		return -1;
+	}
+
+	/* Generate bandpass filter coefficients using windowed sinc */
+	int i;
+	double dr_norm_freq = secam->dr_freq / (sample_rate / 2.0);
+	double db_norm_freq = secam->db_freq / (sample_rate / 2.0);
+	double bw = 500000.0 / (sample_rate / 2.0);  /* Normalized bandwidth */
+
+	for(i = 0; i < filter_taps; i++)
+	{
+		double n = i - (filter_taps - 1) / 2.0;
+		double window = 0.54 - 0.46 * cos(2.0 * M_PI * i / (filter_taps - 1));  /* Hamming window */
+
+		/* Bandpass = 2 * lowpass * cos(2πfc) */
+		if(n == 0)
+		{
+			dr_taps[i] = 2.0 * bw * window;
+			db_taps[i] = 2.0 * bw * window;
+		}
+		else
+		{
+			dr_taps[i] = 2.0 * bw * sin(M_PI * bw * n) / (M_PI * bw * n) *
+			             2.0 * cos(2.0 * M_PI * dr_norm_freq * n) * window;
+			db_taps[i] = 2.0 * bw * sin(M_PI * bw * n) / (M_PI * bw * n) *
+			             2.0 * cos(2.0 * M_PI * db_norm_freq * n) * window;
+		}
+	}
+
+	secam->dr_filter = malloc(sizeof(fir_int16_t));
+	secam->db_filter = malloc(sizeof(fir_int16_t));
+
+	if(!secam->dr_filter || !secam->db_filter)
+	{
+		if(secam->dr_filter) free(secam->dr_filter);
+		if(secam->db_filter) free(secam->db_filter);
+		free(dr_taps);
+		free(db_taps);
+		rx_secam_free(secam);
+		return -1;
+	}
+
+	if(fir_int16_init(secam->dr_filter, dr_taps, filter_taps, 1, 1, 0) != 0 ||
+	   fir_int16_init(secam->db_filter, db_taps, filter_taps, 1, 1, 0) != 0)
+	{
+		free(dr_taps);
+		free(db_taps);
+		rx_secam_free(secam);
+		return -1;
+	}
+
+	free(dr_taps);
+	free(db_taps);
+
+	if(!secam->dr_filter || !secam->db_filter)
+	{
+		rx_secam_free(secam);
+		return -1;
+	}
 
 	return 0;
 }
@@ -858,13 +978,21 @@ void rx_secam_decode_line(rx_secam_decoder_t *secam, int16_t *line, uint32_t *rg
 		/* SECAM transmits Dr (V) and Db (U) on alternating lines */
 		/* Must use delay line to reconstruct both U and V for each line */
 
-		/* TODO: This still needs bandpass filtering + baseband conversion */
-		/* For now, using simplified direct FM demodulation */
+		/* Apply bandpass filtering before FM demodulation for improved color separation */
+		int16_t filtered_sample = line[x];
 
 		if(secam->use_dr)
 		{
-			/* This line has Dr (V): demodulate V, use stored U from previous line */
-			chroma = rx_fm_demod_process(&secam->dr_demod, line[x], 0);
+			/* This line has Dr (V): bandpass filter then demodulate V */
+			if(secam->dr_filter)
+			{
+				int16_t temp_in = line[x];
+				int16_t temp_out = 0;
+				fir_int16_feed(secam->dr_filter, &temp_in, 1, 1);
+				fir_int16_process(secam->dr_filter, &temp_out, 1, 1);
+				filtered_sample = temp_out;
+			}
+			chroma = rx_fm_demod_process(&secam->dr_demod, filtered_sample, 0);
 			v = chroma;
 
 			/* Retrieve U from previous line's demodulated Db */
@@ -878,8 +1006,16 @@ void rx_secam_decode_line(rx_secam_decoder_t *secam, int16_t *line, uint32_t *rg
 		}
 		else
 		{
-			/* This line has Db (U): demodulate U, use stored V from previous line */
-			chroma = rx_fm_demod_process(&secam->db_demod, line[x], 0);
+			/* This line has Db (U): bandpass filter then demodulate U */
+			if(secam->db_filter)
+			{
+				int16_t temp_in = line[x];
+				int16_t temp_out = 0;
+				fir_int16_feed(secam->db_filter, &temp_in, 1, 1);
+				fir_int16_process(secam->db_filter, &temp_out, 1, 1);
+				filtered_sample = temp_out;
+			}
+			chroma = rx_fm_demod_process(&secam->db_demod, filtered_sample, 0);
 			u = chroma;
 
 			/* Retrieve V from previous line's demodulated Dr */
@@ -934,6 +1070,17 @@ int rx_audio_init(rx_audio_demod_t *audio, int sample_rate, double carrier_freq,
 	audio->deemph_filter = NULL;  /* Not using FIR, using IIR instead */
 	audio->resampler = NULL;
 
+	/* Initialize A2 Stereo pilot tone detection */
+	audio->a2_stereo_enabled = 1;  /* Enable by default */
+	audio->a2_pilot_freq = 54687.5;  /* 54.6875 kHz pilot tone for A2 Stereo */
+	audio->a2_pilot_phase = 0;
+	/* Calculate phase step: (2^32 * freq) / sample_rate */
+	audio->a2_pilot_step = (int)((4294967296.0 * audio->a2_pilot_freq) / sample_rate);
+	audio->a2_pilot_i = 0;
+	audio->a2_pilot_q = 0;
+	audio->a2_stereo_detected = 0;
+	audio->a2_confidence = 0;
+
 	return 0;
 }
 
@@ -971,6 +1118,39 @@ int16_t rx_audio_process(rx_audio_demod_t *audio, int16_t i, int16_t q)
 	/* Clamp to int16_t range */
 	if(filtered > 32767) filtered = 32767;
 	if(filtered < -32768) filtered = -32768;
+
+	/* A2 Stereo pilot tone detection */
+	if(audio->a2_stereo_enabled)
+	{
+		/* Correlate with pilot tone frequency (54.6875 kHz) */
+		/* Generate local oscillator for pilot tone */
+		int32_t cos_pilot = (cos(2.0 * M_PI * audio->a2_pilot_phase / 4294967296.0) * 16384.0);
+		int32_t sin_pilot = (sin(2.0 * M_PI * audio->a2_pilot_phase / 4294967296.0) * 16384.0);
+
+		/* Correlate (multiply and integrate) */
+		audio->a2_pilot_i = (audio->a2_pilot_i * 255 + (int32_t)filtered * cos_pilot) / 256;
+		audio->a2_pilot_q = (audio->a2_pilot_q * 255 + (int32_t)filtered * sin_pilot) / 256;
+
+		/* Advance pilot phase */
+		audio->a2_pilot_phase += audio->a2_pilot_step;
+
+		/* Detect pilot tone magnitude */
+		int32_t magnitude = (int32_t)sqrt((double)(audio->a2_pilot_i * audio->a2_pilot_i +
+		                                           audio->a2_pilot_q * audio->a2_pilot_q));
+
+		/* Update stereo detection */
+		if(magnitude > 1000000)  /* Threshold for pilot tone presence */
+		{
+			audio->a2_confidence = (audio->a2_confidence < 100) ? audio->a2_confidence + 1 : 100;
+		}
+		else
+		{
+			audio->a2_confidence = (audio->a2_confidence > 0) ? audio->a2_confidence - 1 : 0;
+		}
+
+		/* Mark as stereo if confidence high enough */
+		audio->a2_stereo_detected = (audio->a2_confidence > 50) ? 1 : 0;
+	}
 
 	/* TODO: Apply resampling if needed */
 

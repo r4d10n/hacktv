@@ -59,6 +59,14 @@ typedef struct {
 	cint32_t carrier_phase;
 	cint32_t carrier_step;
 	fir_int16_t *filter;
+
+	/* Adaptive AGC */
+	int enable_agc;
+	double agc_gain;          /* Current AGC gain (1.0 = unity) */
+	double agc_target;        /* Target signal level */
+	double agc_attack;        /* Attack time constant */
+	double agc_decay;         /* Decay time constant */
+	int32_t agc_peak_level;   /* Peak signal level detector */
 } rx_vsb_demod_t;
 
 /* Sync detector state */
@@ -185,6 +193,16 @@ typedef struct {
 	fir_int16_t *deemph_filter;  /* Legacy - not used, using IIR instead */
 	double deemph_alpha;         /* IIR filter coefficient */
 	int32_t deemph_prev;         /* Previous output sample for IIR */
+
+	/* A2 Stereo detection (dual carrier system) */
+	int a2_stereo_enabled;       /* Enable A2 stereo detection */
+	double a2_pilot_freq;        /* 54.6875 kHz pilot tone */
+	int a2_pilot_phase;          /* Phase accumulator for pilot */
+	int a2_pilot_step;           /* Phase step per sample */
+	int32_t a2_pilot_i;          /* In-phase correlation */
+	int32_t a2_pilot_q;          /* Quadrature correlation */
+	int a2_stereo_detected;      /* 1 if stereo signal present */
+	int a2_confidence;           /* Stereo detection confidence (0-100) */
 
 	/* Output resampler */
 	int output_rate;
