@@ -30,6 +30,13 @@ ifeq ($(FL2K),fl2k)
 	CFLAGS += -DHAVE_FL2K
 endif
 
+PLUTOSDR := $(shell $(PKGCONF) --exists libiio && echo plutosdr)
+ifeq ($(PLUTOSDR),plutosdr)
+	OBJS += rf_plutosdr.o
+	PKGS += libiio
+	CFLAGS += -DHAVE_PLUTOSDR
+endif
+
 # Receiver-specific SDR support
 RX_SOAPYSDR := $(shell $(PKGCONF) --exists SoapySDR && echo SoapySDR)
 ifeq ($(RX_SOAPYSDR),SoapySDR)
