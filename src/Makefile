@@ -5,7 +5,7 @@ PKGCONF := pkg-config
 CFLAGS  := -g -Wall -pthread -O3 $(EXTRA_CFLAGS) -DVERSION=\"$(VERSION)\"
 LDFLAGS := -g -lm -pthread $(EXTRA_LDFLAGS)
 OBJS    := hacktv.o common.o fir.o vbidata.o teletext.o wss.o video.o fifo.o mac.o dance.o eurocrypt.o videocrypt.o videocrypts.o syster.o syster-ca.o acp.o vits.o vitc.o nicam728.o sis.o av.o av_test.o av_ffmpeg.o rf.o rf_file.o spdif.o cc608.o
-RX_OBJS := hackrx.o receiver.o pll.o common.o fir.o nicam_decoder.o teletext_decoder.o video_output.o
+RX_OBJS := hackrx.o receiver.o pll.o common.o fir.o nicam_decoder.o teletext_decoder.o video_output.o wss_decoder.o
 RX_PKGS :=
 PKGS    := libavcodec libavformat libavdevice libswscale libswresample libavutil $(EXTRA_PKGS)
 

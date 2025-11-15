@@ -64,6 +64,7 @@ static void print_usage(void)
 		"      --no-audio                 Disable audio decoding\n"
 		"      --nicam                    Enable NICAM digital audio decoding\n"
 		"      --teletext                 Enable teletext/VBI decoding\n"
+		"      --wss                      Enable WSS (Widescreen Signaling) decoding\n"
 		"\n"
 		"Other options:\n"
 		"  -v, --verbose                  Enable verbose output\n"
@@ -71,11 +72,23 @@ static void print_usage(void)
 		"      --version                  Display version and exit\n"
 		"\n"
 		"Supported TV modes:\n"
-		"  pal       - PAL System I (625 lines, 25fps)\n"
-		"  ntsc      - NTSC System M (525 lines, 29.97fps)\n"
-		"  secam     - SECAM (625 lines, 25fps)\n"
-		"  pal-mono  - PAL monochrome\n"
-		"  ntsc-mono - NTSC monochrome\n"
+		"  PAL variants:\n"
+		"    pal, pal-bg  - PAL-B/G (Western Europe, 625 lines, 5.5 MHz audio)\n"
+		"    pal-i        - PAL-I (UK, Ireland, 625 lines, 6.0 MHz audio)\n"
+		"    pal-dk       - PAL-D/K (Eastern Europe, China, 625 lines, 6.5 MHz audio)\n"
+		"    pal-m        - PAL-M (Brazil, 525 lines, 4.5 MHz audio)\n"
+		"    pal-n        - PAL-N (Argentina, 625 lines, 4.5 MHz audio)\n"
+		"    pal-mono     - PAL monochrome (625 lines)\n"
+		"\n"
+		"  NTSC variants:\n"
+		"    ntsc, ntsc-m - NTSC-M (North America, 525 lines, 4.5 MHz audio)\n"
+		"    ntsc-j       - NTSC-J (Japan, 525 lines, 4.5 MHz audio)\n"
+		"    ntsc-mono    - NTSC monochrome (525 lines)\n"
+		"\n"
+		"  SECAM variants:\n"
+		"    secam, secam-dk - SECAM-D/K (Eastern Europe, 625 lines, 6.5 MHz audio)\n"
+		"    secam-bg        - SECAM-B/G (Middle East, 625 lines, 5.5 MHz audio)\n"
+		"    secam-l         - SECAM-L (France, 625 lines, 6.5 MHz audio)\n"
 		"\n"
 		"Demodulator types:\n"
 		"  fm        - FM demodulation (satellite signals)\n"
@@ -110,14 +123,27 @@ typedef struct {
 } mode_info_t;
 
 static const mode_info_t _modes[] = {
-	{ "pal",       625, 1, { 25, 1 },    RX_COLOUR_PAL,   5500000.0 },
-	{ "pal-i",     625, 1, { 25, 1 },    RX_COLOUR_PAL,   6000000.0 },
-	{ "pal-mono",  625, 1, { 25, 1 },    RX_COLOUR_NONE,  5500000.0 },
-	{ "ntsc",      525, 1, { 30000, 1001 }, RX_COLOUR_NTSC, 4500000.0 },
-	{ "ntsc-m",    525, 1, { 30000, 1001 }, RX_COLOUR_NTSC, 4500000.0 },
-	{ "ntsc-mono", 525, 1, { 30000, 1001 }, RX_COLOUR_NONE, 4500000.0 },
-	{ "secam",     625, 1, { 25, 1 },    RX_COLOUR_SECAM, 6500000.0 },
-	{ "secam-l",   625, 1, { 25, 1 },    RX_COLOUR_SECAM, 6500000.0 },
+	/* PAL variants */
+	{ "pal",       625, 1, { 25, 1 },    RX_COLOUR_PAL,   5500000.0 },  /* PAL-B/G: Western Europe */
+	{ "pal-bg",    625, 1, { 25, 1 },    RX_COLOUR_PAL,   5500000.0 },  /* PAL-B/G: Western Europe */
+	{ "pal-i",     625, 1, { 25, 1 },    RX_COLOUR_PAL,   6000000.0 },  /* PAL-I: UK, Ireland */
+	{ "pal-dk",    625, 1, { 25, 1 },    RX_COLOUR_PAL,   6500000.0 },  /* PAL-D/K: Eastern Europe, China */
+	{ "pal-m",     525, 1, { 30000, 1001 }, RX_COLOUR_PAL, 4500000.0 },  /* PAL-M: Brazil (525 lines) */
+	{ "pal-n",     625, 1, { 25, 1 },    RX_COLOUR_PAL,   4500000.0 },  /* PAL-N: Argentina, Paraguay */
+	{ "pal-mono",  625, 1, { 25, 1 },    RX_COLOUR_NONE,  5500000.0 },  /* PAL monochrome */
+
+	/* NTSC variants */
+	{ "ntsc",      525, 1, { 30000, 1001 }, RX_COLOUR_NTSC, 4500000.0 },  /* NTSC-M: North America */
+	{ "ntsc-m",    525, 1, { 30000, 1001 }, RX_COLOUR_NTSC, 4500000.0 },  /* NTSC-M: North America */
+	{ "ntsc-j",    525, 1, { 30000, 1001 }, RX_COLOUR_NTSC, 4500000.0 },  /* NTSC-J: Japan */
+	{ "ntsc-mono", 525, 1, { 30000, 1001 }, RX_COLOUR_NONE, 4500000.0 },  /* NTSC monochrome */
+
+	/* SECAM variants */
+	{ "secam",     625, 1, { 25, 1 },    RX_COLOUR_SECAM, 6500000.0 },  /* SECAM-D/K: Eastern Europe */
+	{ "secam-dk",  625, 1, { 25, 1 },    RX_COLOUR_SECAM, 6500000.0 },  /* SECAM-D/K: Eastern Europe */
+	{ "secam-bg",  625, 1, { 25, 1 },    RX_COLOUR_SECAM, 5500000.0 },  /* SECAM-B/G: Middle East */
+	{ "secam-l",   625, 1, { 25, 1 },    RX_COLOUR_SECAM, 6500000.0 },  /* SECAM-L: France (AM audio - TODO) */
+
 	{ NULL, 0, 0, { 0, 0 }, 0, 0.0 }
 };
 
@@ -194,6 +220,7 @@ int main(int argc, char *argv[])
 		{ "nicam-output",  required_argument, 0, 'O' },
 		{ "teletext",      no_argument,       0, 'T' },
 		{ "teletext-output", required_argument, 0, 'X' },
+		{ "wss",           no_argument,       0, 'W' },
 		{ "video-format",  required_argument, 0, 'F' },
 		{ "verbose",       no_argument,       0, 'v' },
 		{ "help",          no_argument,       0, 'h' },
@@ -262,6 +289,9 @@ int main(int argc, char *argv[])
 			case 'X':
 				conf.teletext_output = optarg;
 				conf.enable_teletext = 1;
+				break;
+			case 'W':
+				conf.enable_wss = 1;
 				break;
 			case 'F':
 				if(strcasecmp(optarg, "rgb") == 0)

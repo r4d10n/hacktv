@@ -918,10 +918,21 @@ int rx_audio_init(rx_audio_demod_t *audio, int sample_rate, double carrier_freq,
 		return -1;
 	}
 
-	audio->deemph_filter = NULL;
-	audio->resampler = NULL;
+	/* Initialize de-emphasis filter (50μs time constant for PAL)
+	 * De-emphasis compensates for FM pre-emphasis used at transmitter
+	 * 50μs: Europe/PAL, 75μs: North America/NTSC
+	 * Creates 1st-order low-pass filter at fc = 1/(2π × τ) ≈ 3183 Hz
+	 * IIR equation: y[n] = alpha * x[n] + (1-alpha) * y[n-1]
+	 */
+	double time_constant = 50e-6;  /* 50 microseconds for PAL */
+	double fc = 1.0 / (2.0 * M_PI * time_constant);
 
-	/* TODO: Create de-emphasis filter and resampler */
+	/* Calculate IIR coefficient: alpha = 1 / (1 + fs/(2πfc)) */
+	audio->deemph_alpha = 1.0 / (1.0 + (double)sample_rate / (2.0 * M_PI * fc));
+	audio->deemph_prev = 0;
+
+	audio->deemph_filter = NULL;  /* Not using FIR, using IIR instead */
+	audio->resampler = NULL;
 
 	return 0;
 }
@@ -946,13 +957,24 @@ void rx_audio_free(rx_audio_demod_t *audio)
 int16_t rx_audio_process(rx_audio_demod_t *audio, int16_t i, int16_t q)
 {
 	int16_t demod;
+	int32_t filtered;
 
 	/* FM demodulate */
 	demod = rx_fm_demod_process(&audio->fm_demod, i, q);
 
-	/* TODO: Apply de-emphasis and resampling */
+	/* Apply de-emphasis filter (1st-order IIR low-pass)
+	 * y[n] = alpha * x[n] + (1-alpha) * y[n-1]
+	 */
+	filtered = (int32_t)(audio->deemph_alpha * demod + (1.0 - audio->deemph_alpha) * audio->deemph_prev);
+	audio->deemph_prev = filtered;
 
-	return demod;
+	/* Clamp to int16_t range */
+	if(filtered > 32767) filtered = 32767;
+	if(filtered < -32768) filtered = -32768;
+
+	/* TODO: Apply resampling if needed */
+
+	return (int16_t)filtered;
 }
 
 /* =======================================================================*/
@@ -1123,6 +1145,20 @@ int rx_init(rx_t *rx, rx_config_t *conf)
 		printf("Teletext decoder enabled\n");
 	}
 
+	/* Initialize WSS decoder if enabled */
+	if(conf->enable_wss)
+	{
+		if(wss_decoder_init(&rx->wss_decoder, conf->sample_rate, line_length, conf->lines) != 0)
+		{
+			fprintf(stderr, "Failed to initialize WSS decoder\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		rx->enable_wss = 1;
+		printf("WSS (Widescreen Signaling) decoder enabled\n");
+	}
+
 	/* Initialize video output if specified */
 	if(conf->video_output_file && conf->video_output_format != VIDEO_OUT_NONE)
 	{
@@ -1186,6 +1222,12 @@ void rx_free(rx_t *rx)
 			ttx_decoder_save_pages(&rx->teletext_decoder, rx->conf.teletext_output);
 		}
 		ttx_decoder_free(&rx->teletext_decoder);
+	}
+
+	/* Free WSS decoder */
+	if(rx->enable_wss)
+	{
+		wss_decoder_free(&rx->wss_decoder);
 	}
 
 	/* Close video output */
@@ -1270,6 +1312,25 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 				if(line_num >= vbi_start && line_num <= vbi_end)
 				{
 					ttx_decoder_process_line(&rx->teletext_decoder, rx->line_buffer, line_num);
+				}
+			}
+
+			/* Process WSS (Widescreen Signaling) */
+			if(rx->enable_wss)
+			{
+				int wss_result = wss_decoder_process_line(&rx->wss_decoder, rx->line_buffer, line_num, field);
+
+				/* Print WSS info when first detected or when it changes */
+				if(wss_result == 1 && rx->wss_decoder.confidence >= 3)
+				{
+					static uint16_t last_wss_word = 0;
+					if(rx->wss_decoder.current_word != last_wss_word)
+					{
+						char wss_info[256];
+						wss_decoder_get_info(&rx->wss_decoder, wss_info, sizeof(wss_info));
+						fprintf(stderr, "%s\n", wss_info);
+						last_wss_word = rx->wss_decoder.current_word;
+					}
 				}
 			}
 

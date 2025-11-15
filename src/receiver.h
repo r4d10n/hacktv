@@ -18,6 +18,7 @@
 #include "nicam_decoder.h"
 #include "teletext_decoder.h"
 #include "video_output.h"
+#include "wss_decoder.h"
 
 /* Demodulator types */
 typedef enum {
@@ -178,8 +179,10 @@ typedef struct {
 	double carrier_freq;
 	rx_fm_demod_t fm_demod;
 
-	/* De-emphasis filter */
-	fir_int16_t *deemph_filter;
+	/* De-emphasis filter (1st-order IIR) */
+	fir_int16_t *deemph_filter;  /* Legacy - not used, using IIR instead */
+	double deemph_alpha;         /* IIR filter coefficient */
+	int32_t deemph_prev;         /* Previous output sample for IIR */
 
 	/* Output resampler */
 	int output_rate;
@@ -212,6 +215,9 @@ typedef struct {
 	/* Teletext / VBI */
 	int enable_teletext;
 	const char *teletext_output;  /* Output file for captured pages */
+
+	/* WSS (Widescreen Signaling) */
+	int enable_wss;
 
 	/* Video output */
 	video_output_format_t video_output_format;
@@ -249,6 +255,10 @@ typedef struct {
 	/* Teletext decoder (VBI services) */
 	ttx_decoder_t teletext_decoder;
 	int enable_teletext;
+
+	/* WSS decoder (Widescreen Signaling) */
+	wss_decoder_t wss_decoder;
+	int enable_wss;
 
 	/* Video output */
 	video_output_t video_output;
