@@ -19,6 +19,7 @@
 #include "teletext_decoder.h"
 #include "video_output.h"
 #include "wss_decoder.h"
+#include "vitc_decoder.h"
 
 /* Demodulator types */
 typedef enum {
@@ -219,6 +220,9 @@ typedef struct {
 	/* WSS (Widescreen Signaling) */
 	int enable_wss;
 
+	/* VITC (Vertical Interval Timecode) */
+	int enable_vitc;
+
 	/* Video output */
 	video_output_format_t video_output_format;
 	const char *video_output_file;
@@ -259,6 +263,10 @@ typedef struct {
 	/* WSS decoder (Widescreen Signaling) */
 	wss_decoder_t wss_decoder;
 	int enable_wss;
+
+	/* VITC decoder (Vertical Interval Timecode) */
+	vitc_decoder_t vitc_decoder;
+	int enable_vitc;
 
 	/* Video output */
 	video_output_t video_output;

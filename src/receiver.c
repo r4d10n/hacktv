@@ -1159,6 +1159,22 @@ int rx_init(rx_t *rx, rx_config_t *conf)
 		printf("WSS (Widescreen Signaling) decoder enabled\n");
 	}
 
+	/* Initialize VITC decoder if enabled */
+	if(conf->enable_vitc)
+	{
+		int is_625_line = (conf->lines == 625);
+
+		if(vitc_decoder_init(&rx->vitc_decoder, conf->sample_rate, line_length, is_625_line) != 0)
+		{
+			fprintf(stderr, "Failed to initialize VITC decoder\n");
+			rx_free(rx);
+			return -1;
+		}
+
+		rx->enable_vitc = 1;
+		printf("VITC (Vertical Interval Timecode) decoder enabled\n");
+	}
+
 	/* Initialize video output if specified */
 	if(conf->video_output_file && conf->video_output_format != VIDEO_OUT_NONE)
 	{
@@ -1228,6 +1244,12 @@ void rx_free(rx_t *rx)
 	if(rx->enable_wss)
 	{
 		wss_decoder_free(&rx->wss_decoder);
+	}
+
+	/* Free VITC decoder */
+	if(rx->enable_vitc)
+	{
+		vitc_decoder_free(&rx->vitc_decoder);
 	}
 
 	/* Close video output */
@@ -1330,6 +1352,25 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 						wss_decoder_get_info(&rx->wss_decoder, wss_info, sizeof(wss_info));
 						fprintf(stderr, "%s\n", wss_info);
 						last_wss_word = rx->wss_decoder.current_word;
+					}
+				}
+			}
+
+			/* Process VITC (Vertical Interval Timecode) */
+			if(rx->enable_vitc)
+			{
+				int vitc_result = vitc_decoder_process_line(&rx->vitc_decoder, rx->line_buffer, line_num);
+
+				/* Print VITC info when first detected or when seconds change */
+				if(vitc_result == 1 && vitc_decoder_is_valid(&rx->vitc_decoder))
+				{
+					static int last_seconds = -1;
+					if(rx->vitc_decoder.current_tc.seconds != last_seconds)
+					{
+						char vitc_info[256];
+						vitc_decoder_get_info(&rx->vitc_decoder, vitc_info, sizeof(vitc_info));
+						fprintf(stderr, "%s\n", vitc_info);
+						last_seconds = rx->vitc_decoder.current_tc.seconds;
 					}
 				}
 			}
