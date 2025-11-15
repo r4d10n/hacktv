@@ -136,6 +136,10 @@ typedef struct {
 	/* PLL for burst lock */
 	pll_burst_t burst_pll;
 	int use_burst_pll;        /* Enable burst PLL mode */
+
+	/* 1H delay line for comb filter */
+	int16_t *prev_line;
+	int prev_line_length;
 } rx_ntsc_decoder_t;
 
 /* SECAM colour decoder */
@@ -149,6 +153,15 @@ typedef struct {
 
 	rx_fm_demod_t dr_demod;
 	rx_fm_demod_t db_demod;
+
+	/* Chroma bandpass filters */
+	fir_int16_t *dr_filter;  /* Bandpass for 4.40625 MHz */
+	fir_int16_t *db_filter;  /* Bandpass for 4.25000 MHz */
+
+	/* 1H delay line for U/V storage (SECAM alternates Dr/Db on successive lines) */
+	int16_t *prev_u;
+	int16_t *prev_v;
+	int prev_line_length;
 
 	/* Line switching */
 	int use_dr;  /* 0 = Db, 1 = Dr */
