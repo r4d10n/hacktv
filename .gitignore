@@ -13,3 +13,5 @@ test_rx_validation
 test_baseband_output.*
 test_output.*
 test_pal_synthetic.*
+test_color_decode
+test_colorbars_visual
