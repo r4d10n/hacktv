@@ -14,3 +14,4 @@ samples/*.bin
 # Intermediate test videos (keep only final samples)
 samples/colorbars_decoded*.mp4
 samples/pal_decoded_v*.mp4
+external/
