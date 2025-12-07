@@ -5,7 +5,7 @@ PKGCONF := pkg-config
 CFLAGS  := -g -Wall -pthread -O3 $(EXTRA_CFLAGS) -DVERSION=\"$(VERSION)\"
 LDFLAGS := -g -lm -pthread $(EXTRA_LDFLAGS)
 OBJS    := hacktv.o common.o fir.o vbidata.o teletext.o wss.o video.o fifo.o mac.o dance.o eurocrypt.o videocrypt.o videocrypts.o syster.o syster-ca.o acp.o vits.o vitc.o nicam728.o sis.o av.o av_test.o av_ffmpeg.o rf.o rf_file.o spdif.o cc608.o
-RX_OBJS := hackrx.o receiver.o pll.o common.o fir.o nicam_decoder.o teletext_decoder.o video_output.o wss_decoder.o vitc_decoder.o vits_decoder.o
+RX_OBJS := hackrx.o receiver.o pll.o common.o fir.o nicam_decoder.o teletext_decoder.o video_output.o wss_decoder.o vitc_decoder.o vits_decoder.o color_decode.o
 RX_PKGS :=
 PKGS    := libavcodec libavformat libavdevice libswscale libswresample libavutil $(EXTRA_PKGS)
 
@@ -76,7 +76,23 @@ install:
 	cp -f hackrx $(PREFIX)/usr/local/bin/
 
 clean:
-	rm -f *.o *.d hacktv hackrx hacktv.exe hackrx.exe
+	rm -f *.o *.d hacktv hackrx hacktv.exe hackrx.exe test_color_decode test_colorbars_visual *.ppm
+
+# Color decoder test program
+TEST_COLOR_OBJS := test_color_decode.o color_decode.o common.o
+test_color_decode: $(TEST_COLOR_OBJS)
+	$(CC) -o test_color_decode $(TEST_COLOR_OBJS) $(LDFLAGS)
+
+# Visual color bars test program
+TEST_VISUAL_OBJS := test_colorbars_visual.o color_decode.o common.o
+test_colorbars_visual: $(TEST_VISUAL_OBJS)
+	$(CC) -o test_colorbars_visual $(TEST_VISUAL_OBJS) $(LDFLAGS)
+
+test: test_color_decode
+	./test_color_decode
+
+test-visual: test_colorbars_visual
+	./test_colorbars_visual
 
 -include $(OBJS:.o=.d)
 
