@@ -76,7 +76,7 @@ install:
 	cp -f hackrx $(PREFIX)/usr/local/bin/
 
 clean:
-	rm -f *.o *.d hacktv hackrx hacktv.exe hackrx.exe test_color_decode test_colorbars_visual *.ppm
+	rm -f *.o *.d hacktv hackrx hacktv.exe hackrx.exe test_color_decode test_colorbars_visual test_color_accuracy *.ppm
 
 # Color decoder test program
 TEST_COLOR_OBJS := test_color_decode.o color_decode.o common.o
@@ -88,11 +88,19 @@ TEST_VISUAL_OBJS := test_colorbars_visual.o color_decode.o common.o
 test_colorbars_visual: $(TEST_VISUAL_OBJS)
 	$(CC) -o test_colorbars_visual $(TEST_VISUAL_OBJS) $(LDFLAGS)
 
+# Color accuracy test program
+TEST_ACCURACY_OBJS := test_color_accuracy.o color_decode.o common.o
+test_color_accuracy: $(TEST_ACCURACY_OBJS)
+	$(CC) -o test_color_accuracy $(TEST_ACCURACY_OBJS) $(LDFLAGS)
+
 test: test_color_decode
 	./test_color_decode
 
 test-visual: test_colorbars_visual
 	./test_colorbars_visual
+
+test-accuracy: test_color_accuracy
+	./test_color_accuracy
 
 -include $(OBJS:.o=.d)
 

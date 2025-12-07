@@ -47,6 +47,121 @@ int write_ppm(const char *filename, uint32_t *pixels, int width, int height)
 }
 
 /*=========================================================================*/
+/* Direct YUV to RGB Test (No Encoding)                                    */
+/*=========================================================================*/
+
+extern void yuv_to_rgb_bt601(int16_t y, int16_t u, int16_t v,
+                             uint8_t *r, uint8_t *g, uint8_t *b);
+
+/* PAL colorbar values - copy from color_decode.c (scale 56) */
+static const int16_t test_pal_yuv[8][3] = {
+    { 16128,      0,      0},   /* White  (191,191,191) Y=191 */
+    { 10547,  -5337,    879},   /* Yellow (191,191,  0) Y=169 */
+    {  1510,   1799,  -5347},   /* Cyan   (  0,191,191) Y=134 */
+    { -4070,  -3539,  -4475},   /* Green  (  0,191,  0) Y=112 */
+    {-12570,   3539,   4475},   /* Magenta(191,  0,191) Y= 79 */
+    {-18150,  -1799,   5347},   /* Red    (191,  0,  0) Y= 57 */
+    {-27187,   5337,   -879},   /* Blue   (  0,  0,191) Y= 22 */
+    {-32768,      0,      0}    /* Black  (  0,  0,  0) Y=  0 */
+};
+
+void test_direct_yuv_to_rgb(void)
+{
+    const char *names[8] = {"White", "Yellow", "Cyan", "Green",
+                           "Magenta", "Red", "Blue", "Black"};
+    printf("\n=== Direct YUV to RGB Test (no encoding) ===\n");
+    printf("Testing colorbar table values directly:\n\n");
+
+    for (int i = 0; i < 8; i++) {
+        int16_t y = test_pal_yuv[i][0];
+        int16_t u = test_pal_yuv[i][1];
+        int16_t v = test_pal_yuv[i][2];
+        uint8_t r, g, b;
+
+        yuv_to_rgb_bt601(y, u, v, &r, &g, &b);
+
+        printf("  %8s: Y=%6d U=%6d V=%6d -> R=%3d G=%3d B=%3d\n",
+               names[i], y, u, v, r, g, b);
+    }
+    printf("\n");
+}
+
+/*=========================================================================*/
+/* Debug: Test single line encode/decode                                    */
+/*=========================================================================*/
+
+void test_single_line_debug(void)
+{
+    colorbars_gen_t gen;
+    int16_t *encoded_line;
+    int bar_width;
+
+    printf("\n=== Single Line Encode Debug (Line 0) ===\n");
+
+    if (colorbars_gen_init(&gen, COLOR_SYS_PAL, PAL_4FSC) != 0) {
+        fprintf(stderr, "Failed to init generator\n");
+        return;
+    }
+
+    encoded_line = calloc(gen.line_length, sizeof(int16_t));
+    if (!encoded_line) {
+        colorbars_gen_free(&gen);
+        return;
+    }
+
+    colorbars_gen_reset(&gen);
+    colorbars_gen_line(&gen, encoded_line, 0);  /* Generate line 0 (first after reset) */
+
+    bar_width = gen.active_length / 8;
+    printf("Line length: %d, Active start: %d, Active length: %d, Bar width: %d\n",
+           gen.line_length, gen.active_start, gen.active_length, bar_width);
+
+    /* Test theoretical values for Yellow at position 186 (start of active area) */
+    /* At x=186, phase should be 186 * phase_inc = 186 * 4096 = 761856 mod 16384 = 8192 = π */
+    printf("\nFor Yellow (bar 1):\n");
+    printf("  Table values (scale 56): Y=%d, U=%d, V=%d\n", 10547, -5337, 879);
+
+    /* At phase π: sin=0, cos=-1 */
+    /* chroma = U*0 + V*(-1) = -879 */
+    /* expected sample = Y + chroma = 10547 - 879 = 9668 */
+    printf("  At phase π (180°): sin=0, cos=-1, expected sample = 10547 - 879 = 9668\n");
+
+    /* Sample 4 consecutive positions in bar 1 */
+    int bar1_start = gen.active_start + bar_width;  /* Start of bar 1 */
+    printf("  Samples at bar 1 start (x=%d): %d, %d, %d, %d\n",
+           bar1_start,
+           encoded_line[bar1_start],
+           encoded_line[bar1_start + 1],
+           encoded_line[bar1_start + 2],
+           encoded_line[bar1_start + 3]);
+
+    /* Manual Y extraction */
+    int32_t s0 = encoded_line[bar1_start];
+    int32_t s1 = encoded_line[bar1_start + 1];
+    int32_t s2 = encoded_line[bar1_start + 2];
+    int32_t s3 = encoded_line[bar1_start + 3];
+    int32_t y_ext = (s0 + s1 + s2 + s3) >> 2;
+    printf("  Y_extracted = (%d + %d + %d + %d)/4 = %d (expected ~10547)\n",
+           (int)s0, (int)s1, (int)s2, (int)s3, (int)y_ext);
+
+    /* Sample composite signal at center of each bar */
+    printf("\nComposite signal samples at bar centers:\n");
+    for (int bar = 0; bar < 8; bar++) {
+        int center_x = gen.active_start + bar * bar_width + bar_width / 2;
+        s0 = encoded_line[center_x];
+        s1 = encoded_line[center_x + 1];
+        s2 = encoded_line[center_x + 2];
+        s3 = encoded_line[center_x + 3];
+        y_ext = (s0 + s1 + s2 + s3) >> 2;
+        printf("  Bar %d at x=%d: s[0..3] = %6d, %6d, %6d, %6d | Y_ext=%6d\n",
+               bar, center_x, (int)s0, (int)s1, (int)s2, (int)s3, (int)y_ext);
+    }
+
+    free(encoded_line);
+    colorbars_gen_free(&gen);
+}
+
+/*=========================================================================*/
 /* Generate and Decode PAL Color Bars                                      */
 /*=========================================================================*/
 
@@ -277,6 +392,12 @@ int main(int argc, char *argv[])
     printf("Color Bars Visual Test Suite\n");
     printf("Based on PAL-CRT/NTSC-CRT Reference\n");
     printf("================================================\n");
+
+    /* Test direct YUV to RGB conversion first */
+    test_direct_yuv_to_rgb();
+
+    /* Debug single line encode */
+    test_single_line_debug();
 
     /* Generate reference bars */
     test_reference_bars();

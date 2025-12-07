@@ -359,27 +359,32 @@ void yuv_to_rgb_bt601(int16_t y, int16_t u, int16_t v,
 {
     /*
      * BT.601 YUV to RGB conversion:
-     * R = Y + 1.402 * V
-     * G = Y - 0.344 * U - 0.714 * V
-     * B = Y + 1.772 * U
+     * R = Y + 1.402 * Cr'
+     * G = Y - 0.344 * Cb' - 0.714 * Cr'
+     * B = Y + 1.772 * Cb'
      *
-     * Using 12-bit fixed point coefficients:
-     * 1.402 * 4096 = 5743
-     * 0.344 * 4096 = 1409
-     * 0.714 * 4096 = 2925
-     * 1.772 * 4096 = 7258
+     * Input Y is in 16-bit signed range: -32768 (black) to ~+16128 (white 191)
+     * Input U (Cb') and V (Cr') are scaled by 56 relative to 8-bit range
+     * So U, V in range ±5400 corresponds to Cb', Cr' in range ±96
+     *
+     * Using 14-bit fixed point coefficients:
+     * Since U, V are 56x the 8-bit values, divide coefficients by 56:
+     * 1.402 / 56 * 16384 = 410.2 ≈ 410
+     * 0.344 / 56 * 16384 = 100.7 ≈ 101
+     * 0.714 / 56 * 16384 = 208.9 ≈ 209
+     * 1.772 / 56 * 16384 = 518.4 ≈ 518
      */
 
     int32_t r_tmp, g_tmp, b_tmp;
 
-    /* Y input is assumed to be in range -32768 to +32767 */
-    /* Map to 0-255 range for output */
+    /* Map Y from signed 16-bit to 0-255 range */
+    /* Y of -32768 -> 0, Y of +32767 -> 255 */
     int32_t y_scaled = (y + 32768) >> 8;
 
-    /* U and V are in signed 16-bit, scale appropriately */
-    r_tmp = y_scaled + ((v * 5743) >> 20);
-    g_tmp = y_scaled - ((u * 1409) >> 20) - ((v * 2925) >> 20);
-    b_tmp = y_scaled + ((u * 7258) >> 20);
+    /* Apply color difference with proper scaling */
+    r_tmp = y_scaled + ((v * 410) >> 14);
+    g_tmp = y_scaled - ((u * 101) >> 14) - ((v * 209) >> 14);
+    b_tmp = y_scaled + ((u * 518) >> 14);
 
     *r = (uint8_t)CLAMP(r_tmp, 0, 255);
     *g = (uint8_t)CLAMP(g_tmp, 0, 255);
@@ -400,23 +405,25 @@ void iq_to_rgb_ntsc(int16_t y, int16_t i, int16_t q,
      * G = Y - 0.272 * I - 0.647 * Q
      * B = Y - 1.105 * I + 1.702 * Q
      *
-     * Using 12-bit fixed point:
-     * 0.956 * 4096 = 3916
-     * 0.621 * 4096 = 2543
-     * 0.272 * 4096 = 1114
-     * 0.647 * 4096 = 2650
-     * 1.105 * 4096 = 4526
-     * 1.702 * 4096 = 6972
+     * Input I, Q are scaled by 56 relative to 8-bit range.
+     * Using 14-bit fixed point coefficients divided by 56:
+     * 0.956 / 56 * 16384 = 280
+     * 0.621 / 56 * 16384 = 182
+     * 0.272 / 56 * 16384 = 80
+     * 0.647 / 56 * 16384 = 189
+     * 1.105 / 56 * 16384 = 323
+     * 1.702 / 56 * 16384 = 498
      */
 
     int32_t r_tmp, g_tmp, b_tmp;
 
-    /* Map Y to 0-255 range */
+    /* Map Y from signed 16-bit to 0-255 range */
     int32_t y_scaled = (y + 32768) >> 8;
 
-    r_tmp = y_scaled + ((i * 3916) >> 20) + ((q * 2543) >> 20);
-    g_tmp = y_scaled - ((i * 1114) >> 20) - ((q * 2650) >> 20);
-    b_tmp = y_scaled - ((i * 4526) >> 20) + ((q * 6972) >> 20);
+    /* Apply IQ color difference with proper scaling */
+    r_tmp = y_scaled + ((i * 280) >> 14) + ((q * 182) >> 14);
+    g_tmp = y_scaled - ((i * 80) >> 14) - ((q * 189) >> 14);
+    b_tmp = y_scaled - ((i * 323) >> 14) + ((q * 498) >> 14);
 
     *r = (uint8_t)CLAMP(r_tmp, 0, 255);
     *g = (uint8_t)CLAMP(g_tmp, 0, 255);
@@ -513,76 +520,78 @@ void pal_decoder_decode_line(pal_decoder_t *dec, const int16_t *input,
     /* Process burst for this line */
     burst_detector_process(&dec->burst, input, dec->line_length);
 
-    /* 4-sample quadrature demodulation (based on PAL-CRT approach) */
-    /* At 4fsc sampling, samples are at 0°, 90°, 180°, 270° of carrier */
+    /* ===================================================================== */
+    /* Carrier-Locked Quadrature Demodulation for PAL                        */
+    /*                                                                       */
+    /* At 4fsc sampling, carrier advances exactly 90° per sample.            */
+    /* The carrier phase at any position is: phase_inc * position            */
+    /* where phase_inc = (fsc/sample_rate) * 2π = π/2 for 4fsc.             */
+    /*                                                                       */
+    /* Composite signal: S = Y + U*sin(φ) + V*cos(φ)                         */
+    /*                                                                       */
+    /* Synchronous demodulation:                                             */
+    /*   Sum over N samples: Σ S * sin(φ) gives U (scaled)                   */
+    /*   Sum over N samples: Σ S * cos(φ) gives V (scaled)                   */
+    /*   Sum over N samples: Σ S gives Y * N (chroma cancels)                */
+    /* ===================================================================== */
+
+    /* Calculate carrier phase increment (90° per sample at 4fsc) */
+    int32_t phase_inc = T14_PI / 2;  /* 90° in T14 units */
 
     for (x = 0; x < width; x++) {
         int sample_pos = dec->active_start + x;
-        int16_t sample = input[sample_pos];
-        int16_t prev_sample = 0;
 
-        /* Get previous line sample for comb filter */
-        if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-            prev_sample = delay_1h_get(&dec->delay_line, sample_pos);
+        /* Use 4 consecutive samples centered on current position */
+        int32_t y_sum = 0, u_sum = 0, v_sum = 0;
+        int k;
+
+        for (k = 0; k < 4; k++) {
+            int pos = sample_pos + k - 1;  /* positions: x-1, x, x+1, x+2 */
+            if (pos < 0 || pos >= dec->line_length) continue;
+
+            int16_t s = input[pos];
+
+            /* Calculate carrier phase at this position */
+            /* Phase advances linearly from start of line */
+            int32_t phase = (pos * phase_inc) & T14_MASK;
+
+            /* Sum for Y (all samples contribute equally) */
+            y_sum += s;
+
+            /* Synchronous demodulation: multiply by sin/cos reference */
+            int32_t sin_ref = sin_lookup(phase);
+            int32_t cos_ref = cos_lookup(phase);
+
+            /* Accumulate weighted by carrier reference */
+            u_sum += (s * sin_ref) >> 15;
+            v_sum += (s * cos_ref) >> 15;
         }
 
-        /* === Comb Filter === */
-        /* PAL: chroma phase inverts each line (V-switch) */
-        /* Adding lines: Y+C + Y-C = 2Y (chroma cancels) */
-        /* Subtracting: Y+C - (Y-C) = 2C (luma cancels) */
-        int16_t luma_comb = 0;
+        /* Average Y over 4 samples (chroma cancels) */
+        int32_t y_raw = y_sum >> 2;
 
-        if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-            luma_comb = (sample + prev_sample) / 2;
-        } else {
-            luma_comb = sample;
+        /* U and V sums have 2x gain from synchronous demodulation */
+        /* Keep them as-is since yuv_to_rgb_bt601 expects 2x gain */
+        int32_t u_raw = u_sum;
+        int32_t v_raw = v_sum;
+
+        /* Apply PAL V-switch (alternating V phase each line) */
+        if (dec->v_switch) {
+            v_raw = -v_raw;
         }
 
-        /* === Extract Luminance === */
-        y = eq_band3_process(&dec->y_eq, luma_comb);
-
-        /* === Quadrature Demodulation (4-sample method) === */
-        /* At 4fsc, phase alignment determines which samples are I and Q */
-        int phase_align = POSMOD(dec->hsync + sample_pos, 4);
-
-        /* Get 4 consecutive samples around this position */
-        int16_t ccr[4];
-        int i;
-        for (i = 0; i < 4; i++) {
-            int pos = sample_pos - 2 + i;
-            if (pos >= 0 && pos < dec->line_length) {
-                if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-                    int16_t curr = input[pos];
-                    int16_t prev = delay_1h_get(&dec->delay_line, pos);
-                    ccr[i] = (curr - prev) / 2;  /* Chroma only */
-                } else {
-                    ccr[i] = input[pos];
-                }
-            } else {
-                ccr[i] = 0;
-            }
-        }
-
-        /* Quadrature demodulation using 4-sample technique */
-        /* I = sample[90°] - sample[270°] */
-        /* Q = sample[180°] - sample[0°] */
-        int32_t dcu = ccr[(phase_align + 1) & 3] - ccr[(phase_align + 3) & 3];
-        int32_t dcv = ccr[(phase_align + 2) & 3] - ccr[(phase_align + 0) & 3];
-
-        /* Apply PAL V-switch (alternating V phase) */
-        if (!dec->v_switch) {
-            dcv = -dcv;
-        }
+        /* Apply lowpass filtering for cleaner Y */
+        y = eq_band3_process(&dec->y_eq, (int16_t)y_raw);
 
         /* Apply hue rotation */
         int32_t hue_sin = sin_lookup(dec->hue);
         int32_t hue_cos = cos_lookup(dec->hue);
-        int32_t u_rot = (dcu * hue_cos - dcv * hue_sin) >> 15;
-        int32_t v_rot = (dcv * hue_cos + dcu * hue_sin) >> 15;
+        int32_t u_rot = (u_raw * hue_cos - v_raw * hue_sin) >> 15;
+        int32_t v_rot = (v_raw * hue_cos + u_raw * hue_sin) >> 15;
 
-        /* Apply saturation */
-        u = (int16_t)((u_rot * dec->saturation) >> 16);
-        v = (int16_t)((v_rot * dec->saturation) >> 16);
+        /* Apply saturation - divide by 2 to match yuv_to_rgb coefficient scaling */
+        u = (int16_t)((u_rot * dec->saturation) >> 17);
+        v = (int16_t)((v_rot * dec->saturation) >> 17);
 
         /* Apply brightness and contrast to Y */
         int32_t y_adj = ((y * dec->contrast) >> 16) + dec->brightness;
@@ -707,61 +716,64 @@ void ntsc_decoder_decode_line(ntsc_decoder_t *dec, const int16_t *input,
     /* Process burst for this line */
     burst_detector_process(&dec->burst, input, dec->line_length);
 
+    /* ===================================================================== */
+    /* Carrier-Locked Quadrature Demodulation for NTSC                       */
+    /*                                                                       */
+    /* At 4fsc sampling, carrier advances exactly 90° per sample.            */
+    /* Composite signal: S = Y + I*sin(φ) + Q*cos(φ)                         */
+    /*                                                                       */
+    /* Synchronous demodulation:                                             */
+    /*   Sum over N samples: Σ S * sin(φ) gives I (scaled)                   */
+    /*   Sum over N samples: Σ S * cos(φ) gives Q (scaled)                   */
+    /*   Sum over N samples: Σ S gives Y * N (chroma cancels)                */
+    /* ===================================================================== */
+
+    /* Calculate carrier phase increment (90° per sample at 4fsc) */
+    int32_t phase_inc = T14_PI / 2;  /* 90° in T14 units */
+
     for (x = 0; x < width; x++) {
         int sample_pos = dec->active_start + x;
-        int16_t sample = input[sample_pos];
-        int16_t prev_sample = 0;
 
-        /* Get previous line sample for comb filter */
-        if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-            prev_sample = delay_1h_get(&dec->delay_line, sample_pos);
+        /* Use 4 consecutive samples centered on current position */
+        int32_t y_sum = 0, i_sum = 0, q_sum = 0;
+        int k;
+
+        for (k = 0; k < 4; k++) {
+            int pos = sample_pos + k - 1;  /* positions: x-1, x, x+1, x+2 */
+            if (pos < 0 || pos >= dec->line_length) continue;
+
+            int16_t s = input[pos];
+
+            /* Calculate carrier phase at this position */
+            int32_t phase = (pos * phase_inc) & T14_MASK;
+
+            /* Sum for Y (all samples contribute equally) */
+            y_sum += s;
+
+            /* Synchronous demodulation: multiply by sin/cos reference */
+            int32_t sin_ref = sin_lookup(phase);
+            int32_t cos_ref = cos_lookup(phase);
+
+            /* Accumulate weighted by carrier reference */
+            i_sum += (s * sin_ref) >> 15;
+            q_sum += (s * cos_ref) >> 15;
         }
 
-        /* === Comb Filter === */
-        /* NTSC: chroma phase is consistent between lines at same H position */
-        /* This allows simple comb filtering */
-        int16_t luma_comb = 0;
+        /* Average Y over 4 samples (chroma cancels) */
+        int32_t y_raw = y_sum >> 2;
 
-        if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-            /* For NTSC, add lines to cancel chroma (180° phase shift line-to-line) */
-            luma_comb = (sample + prev_sample) / 2;
-        } else {
-            luma_comb = sample;
-        }
+        /* Scale I and Q (each sample contributes sin²/cos² on average) */
+        int32_t i_raw = i_sum >> 1;
+        int32_t q_raw = q_sum >> 1;
 
-        /* === Extract Luminance === */
-        y = eq_band3_process(&dec->y_eq, luma_comb);
-
-        /* === Quadrature Demodulation (4-sample method) === */
-        int phase_align = POSMOD(dec->hsync + sample_pos, 4);
-
-        /* Get 4 consecutive samples for quadrature detection */
-        int16_t ccr[4];
-        int idx;
-        for (idx = 0; idx < 4; idx++) {
-            int pos = sample_pos - 2 + idx;
-            if (pos >= 0 && pos < dec->line_length) {
-                if (dec->use_comb && delay_1h_is_valid(&dec->delay_line)) {
-                    int16_t curr = input[pos];
-                    int16_t prev = delay_1h_get(&dec->delay_line, pos);
-                    ccr[idx] = (curr - prev) / 2;
-                } else {
-                    ccr[idx] = input[pos];
-                }
-            } else {
-                ccr[idx] = 0;
-            }
-        }
-
-        /* I/Q demodulation using 4-sample technique */
-        int32_t dci = ccr[(phase_align + 1) & 3] - ccr[(phase_align + 3) & 3];
-        int32_t dcq = ccr[(phase_align + 2) & 3] - ccr[(phase_align + 0) & 3];
+        /* Apply lowpass filtering for cleaner Y */
+        y = eq_band3_process(&dec->y_eq, (int16_t)y_raw);
 
         /* Apply hue rotation */
         int32_t hue_sin = sin_lookup(dec->hue);
         int32_t hue_cos = cos_lookup(dec->hue);
-        int32_t i_rot = (dci * hue_cos - dcq * hue_sin) >> 15;
-        int32_t q_rot = (dcq * hue_cos + dci * hue_sin) >> 15;
+        int32_t i_rot = (i_raw * hue_cos - q_raw * hue_sin) >> 15;
+        int32_t q_rot = (q_raw * hue_cos + i_raw * hue_sin) >> 15;
 
         /* Apply saturation */
         i_val = (int16_t)((i_rot * dec->saturation) >> 16);
@@ -798,28 +810,54 @@ void ntsc_decoder_new_field(ntsc_decoder_t *dec, int field)
 /* Generates EBU 75% or SMPTE color bars with proper modulated signal     */
 /*=========================================================================*/
 
-/* Standard EBU 75% color bar values (Y, U, V) */
+/*
+ * Standard EBU 75% color bar values (Y, U, V) for 16-bit range
+ *
+ * 75% bars have RGB values of (191, 191, 191) for white down to (0, 0, 0) for black
+ *
+ * Calculation:
+ *   Y_luma = 0.299*R + 0.587*G + 0.114*B
+ *   Y_16bit = round(Y_luma * 256) - 32768
+ *   Cb' = (B - Y_luma) * 0.564  (BT.601 color difference)
+ *   Cr' = (R - Y_luma) * 0.713
+ *
+ * Chroma is scaled by 56 to ensure Y + chroma fits in ±32767 even for Blue.
+ * For Blue (Y=-27187), max chroma = sqrt(95.4² + 15.7²) * 56 = 5416
+ * Blue min sample = -27187 - 5416 = -32603 (within range)
+ *
+ *   U_16bit = round(Cb' * 56)
+ *   V_16bit = round(Cr' * 56)
+ */
 static const int16_t pal_colorbars_yuv[8][3] = {
-    { 16384,      0,      0},   /* White */
-    { 12529, -11076,  10565},   /* Yellow */
-    {  9830,  10565,  -4535},   /* Cyan */
-    {  5975,   -511,   6030},   /* Green */
-    {  2024,    511,  -6030},   /* Magenta */
-    { -1681, -10565,   4535},   /* Red */
-    { -5536,  11076, -10565},   /* Blue */
-    {-16384,      0,      0}    /* Black */
+    { 16128,      0,      0},   /* White  (191,191,191) Y=191 */
+    { 10547,  -5337,    879},   /* Yellow (191,191,  0) Y=169 */
+    {  1510,   1799,  -5347},   /* Cyan   (  0,191,191) Y=134 */
+    { -4070,  -3539,  -4475},   /* Green  (  0,191,  0) Y=112 */
+    {-12570,   3539,   4475},   /* Magenta(191,  0,191) Y= 79 */
+    {-18150,  -1799,   5347},   /* Red    (191,  0,  0) Y= 57 */
+    {-27187,   5337,   -879},   /* Blue   (  0,  0,191) Y= 22 */
+    {-32768,      0,      0}    /* Black  (  0,  0,  0) Y=  0 */
 };
 
-/* NTSC SMPTE color bars (Y, I, Q) */
+/*
+ * NTSC SMPTE 75% color bars (Y, I, Q) for 16-bit range
+ * I and Q are the NTSC chrominance signals using standard formulas:
+ *   I = 0.596*R - 0.274*G - 0.322*B
+ *   Q = 0.211*R - 0.523*G + 0.312*B
+ *
+ * Scaled by 56 to match PAL and avoid int16_t overflow:
+ *   I_16bit = round(I * 56)
+ *   Q_16bit = round(Q * 56)
+ */
 static const int16_t ntsc_colorbars_iq[8][3] = {
-    { 16384,      0,      0},   /* White */
-    { 12877,   6030,   8773},   /* Yellow */
-    {  8474,  -8257,   3714},   /* Cyan */
-    {  4967,  -2227,  12487},   /* Green */
-    { -4967,   2227, -12487},   /* Magenta */
-    { -8474,   8257,  -3714},   /* Red */
-    {-12877,  -6030,  -8773},   /* Blue */
-    {-16384,      0,      0}    /* Black */
+    { 16128,      0,      0},   /* White  (191,191,191) */
+    { 10547,   3444,  -3337},   /* Yellow (191,191,  0) */
+    {  1510,  -6375,  -2257},   /* Cyan   (  0,191,191) */
+    { -4070,  -2931,  -5594},   /* Green  (  0,191,  0) */
+    {-12570,   2931,   5594},   /* Magenta(191,  0,191) */
+    {-18150,   6375,   2257},   /* Red    (191,  0,  0) */
+    {-27187,  -3444,   3337},   /* Blue   (  0,  0,191) */
+    {-32768,      0,      0}    /* Black  (  0,  0,  0) */
 };
 
 int colorbars_gen_init(colorbars_gen_t *gen, color_system_t system, int sample_rate)
@@ -883,8 +921,8 @@ void colorbars_gen_line(colorbars_gen_t *gen, int16_t *output, int line_number)
         int16_t sample = 0;
 
         if (x < sync_end) {
-            /* Sync tip */
-            sample = SYNC_LEVEL >> 1;
+            /* Sync tip - full amplitude */
+            sample = SYNC_LEVEL;
         } else if (x < gen->active_start) {
             /* Blanking level */
             sample = 0;
@@ -938,8 +976,8 @@ void colorbars_gen_line(colorbars_gen_t *gen, int16_t *output, int line_number)
                 chroma = ((i_level * sin_phase) >> 15) + ((q_level * cos_phase) >> 15);
             }
 
-            /* Combine luma and chroma */
-            sample = (y_level >> 1) + (int16_t)(chroma >> 1);
+            /* Combine luma and chroma - full amplitude */
+            sample = y_level + (int16_t)chroma;
         } else {
             /* Front porch */
             sample = 0;

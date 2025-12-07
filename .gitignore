@@ -15,3 +15,4 @@ test_output.*
 test_pal_synthetic.*
 test_color_decode
 test_colorbars_visual
+test_color_accuracy
