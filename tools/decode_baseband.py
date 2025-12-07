@@ -349,24 +349,47 @@ class ProfessionalDecoder:
             signal = Y + V*cos(ωt)*pal + U*sin(ωt)
 
         The burst phase tells us the carrier phase at the burst position.
-        For PAL, the burst is at 135° relative to the U axis (for pal=+1).
+        For PAL, the burst alternates phase based on pal_sign:
+        - pal=+1 lines: burst = cos(ωt + 45°), measured phase ≈ -45°
+        - pal=-1 lines: burst = cos(ωt + 225°), measured phase ≈ 135°
 
         We use the measured burst phase to lock the demodulation, adding
-        an empirical offset to align with the encoding axes.
+        an empirically-determined offset to align with the encoding axes.
         """
         fc = self.config['colour_carrier']
         t = np.arange(len(chroma)) / self.sample_rate
 
         if self.mode == 'pal':
-            pal_sign = 1.0 if (line_number % 2) == 0 else -1.0
+            # PAL burst is at 135° relative to U axis, alternating polarity
+            # For pal=+1: measured burst phase ≈ -45° (or 315°)
+            # For pal=-1: measured burst phase ≈ -135° (or 225°)
+            #
+            # Detect PAL sign from burst phase: if burst_phase is closer to
+            # -45° (or 315°), it's pal=+1; if closer to -135° (or 225°), it's pal=-1
+            burst_deg = np.rad2deg(burst_phase)
+
+            # Normalize to -180 to 180 range
+            while burst_deg > 180:
+                burst_deg -= 360
+            while burst_deg < -180:
+                burst_deg += 360
+
+            # Detect PAL sign from burst phase
+            # -45° is pal=+1, -135° is pal=-1
+            # Threshold at -90° (halfway between -45 and -135)
+            if burst_deg > -90:
+                # Closer to -45° → pal=+1
+                pal_sign = 1.0
+                phase_offset = np.deg2rad(45.0)
+            else:
+                # Closer to -135° → pal=-1
+                pal_sign = -1.0
+                phase_offset = np.deg2rad(135.0)
         else:
             pal_sign = 1.0
+            phase_offset = np.deg2rad(0.0)
 
         # Use burst phase to lock demodulation
-        # The burst phase measurement gives us the carrier phase at burst position
-        # We need to add an offset to align with the U/V encoding axes
-        # Empirical offset: +30° gives best PSNR for PAL at 16MHz
-        phase_offset = np.deg2rad(30.0)
         demod_phase = burst_phase + phase_offset
 
         # Generate carriers
@@ -434,11 +457,10 @@ class ProfessionalDecoder:
         gw = self.config['gw']
         bw = self.config['bw']
 
-        # Compensate for PAL delay line averaging + filter losses
-        # PAL delay line: (current + previous)/2 gives ~0.5x
-        # Additional filter losses: ~0.85x
-        # Total: ~0.5 * 0.85 = 0.43x, need ~2.3x boost
-        chroma_scale = 2.3
+        # Compensate for filter losses
+        # Without PAL delay line averaging, we only have filter losses (~15%)
+        # Need ~1.15x boost to compensate
+        chroma_scale = 1.15
 
         # U and V are in signal levels (scaled by white_level - black_level)
         # Convert back to original (B-Y) and (R-Y) ranges
@@ -502,12 +524,10 @@ class ProfessionalDecoder:
             u_demod, v_demod = self._demodulate_chroma(chroma, burst_phase, source_line, t_offset)
 
             # === PAL delay line averaging ===
-            if self.mode == 'pal':
-                u_final, v_final = self._pal_delay_line_average(
-                    u_demod, v_demod, prev_u, prev_v, source_line
-                )
-            else:
-                u_final, v_final = u_demod, v_demod
+            # Note: Disabled for now as it can cause color artifacts when
+            # phase alignment is not perfect between adjacent lines.
+            # The empirical per-line phase offsets provide adequate correction.
+            u_final, v_final = u_demod, v_demod
 
             # Store for next iteration (adjacent lines in same field)
             prev_line_raw = line_data.copy()
