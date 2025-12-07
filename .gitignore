@@ -3,3 +3,14 @@
 *.exe
 build_win64
 hacktv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large baseband test files
+samples/*.bin
+
+# Intermediate test videos (keep only final samples)
+samples/colorbars_decoded*.mp4
+samples/pal_decoded_v*.mp4
