@@ -3,3 +3,4 @@
 *.exe
 build_win64
 hacktv
+__pycache__/
