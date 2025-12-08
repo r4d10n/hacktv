@@ -1,0 +1,331 @@
+{
+  "timestamp": "2025-12-08T20:37:38.155677",
+  "total_frames_tested": 50,
+  "frame_numbers": [
+    13,
+    22,
+    23,
+    25,
+    26,
+    54,
+    57,
+    59,
+    62,
+    67,
+    81,
+    89,
+    91,
+    111,
+    120,
+    121,
+    122,
+    124,
+    129,
+    135,
+    150,
+    152,
+    182,
+    184,
+    193,
+    204,
+    224,
+    226,
+    239,
+    268,
+    289,
+    297,
+    311,
+    312,
+    318,
+    337,
+    342,
+    356,
+    367,
+    369,
+    376,
+    387,
+    389,
+    398,
+    400,
+    422,
+    424,
+    443,
+    455,
+    466
+  ],
+  "decoder": "PAL-CRT + color correction matrix",
+  "color_matrix": [
+    [
+      1.0026791,
+      -1.0288666,
+      1.0008646
+    ],
+    [
+      -0.08147726,
+      0.8675986,
+      0.1154002
+    ],
+    [
+      -0.5413261,
+      2.5849624,
+      -1.1179323
+    ]
+  ],
+  "frames": [
+    {
+      "frame": 13,
+      "mean_brightness": 23.518054751800413,
+      "color_variance": 238.05476418175022
+    },
+    {
+      "frame": 22,
+      "mean_brightness": 39.690660365226336,
+      "color_variance": 691.7156881153632
+    },
+    {
+      "frame": 23,
+      "mean_brightness": 41.44754452803498,
+      "color_variance": 754.4401122038438
+    },
+    {
+      "frame": 25,
+      "mean_brightness": 45.80723218878601,
+      "color_variance": 938.8318347489234
+    },
+    {
+      "frame": 26,
+      "mean_brightness": 47.69727044753086,
+      "color_variance": 990.9552590239042
+    },
+    {
+      "frame": 54,
+      "mean_brightness": 95.42446309156378,
+      "color_variance": 3715.733355834104
+    },
+    {
+      "frame": 57,
+      "mean_brightness": 96.03089474022634,
+      "color_variance": 3809.8827638083712
+    },
+    {
+      "frame": 59,
+      "mean_brightness": 95.9670195151749,
+      "color_variance": 3818.666683962816
+    },
+    {
+      "frame": 62,
+      "mean_brightness": 96.33257056970164,
+      "color_variance": 3822.37896630114
+    },
+    {
+      "frame": 67,
+      "mean_brightness": 96.1033203125,
+      "color_variance": 3771.253454885662
+    },
+    {
+      "frame": 81,
+      "mean_brightness": 96.5956299832819,
+      "color_variance": 3856.6363035357194
+    },
+    {
+      "frame": 89,
+      "mean_brightness": 96.34760400591564,
+      "color_variance": 3765.794433951829
+    },
+    {
+      "frame": 91,
+      "mean_brightness": 96.57480629501029,
+      "color_variance": 3850.521643062964
+    },
+    {
+      "frame": 111,
+      "mean_brightness": 55.16763278034979,
+      "color_variance": 1856.7682033076314
+    },
+    {
+      "frame": 120,
+      "mean_brightness": 56.373568512088475,
+      "color_variance": 2000.78995887354
+    },
+    {
+      "frame": 121,
+      "mean_brightness": 56.491272022890946,
+      "color_variance": 2014.6020491456286
+    },
+    {
+      "frame": 122,
+      "mean_brightness": 56.42841113683127,
+      "color_variance": 2025.3344391175203
+    },
+    {
+      "frame": 124,
+      "mean_brightness": 56.7868666409465,
+      "color_variance": 2075.2174529986805
+    },
+    {
+      "frame": 129,
+      "mean_brightness": 57.224683320473254,
+      "color_variance": 2112.831141095281
+    },
+    {
+      "frame": 135,
+      "mean_brightness": 57.45316920653292,
+      "color_variance": 2191.014652962536
+    },
+    {
+      "frame": 150,
+      "mean_brightness": 58.496059188528804,
+      "color_variance": 2320.7148465563628
+    },
+    {
+      "frame": 152,
+      "mean_brightness": 58.54910702803498,
+      "color_variance": 2348.4518863102803
+    },
+    {
+      "frame": 182,
+      "mean_brightness": 63.90007716049383,
+      "color_variance": 914.3027689605595
+    },
+    {
+      "frame": 184,
+      "mean_brightness": 63.80080375514403,
+      "color_variance": 911.1534389561201
+    },
+    {
+      "frame": 193,
+      "mean_brightness": 62.73315489969136,
+      "color_variance": 902.2123280932045
+    },
+    {
+      "frame": 204,
+      "mean_brightness": 63.93331163194444,
+      "color_variance": 905.1135974065033
+    },
+    {
+      "frame": 224,
+      "mean_brightness": 62.32033420138889,
+      "color_variance": 865.4237163273345
+    },
+    {
+      "frame": 226,
+      "mean_brightness": 62.045694283693415,
+      "color_variance": 893.1257744919799
+    },
+    {
+      "frame": 239,
+      "mean_brightness": 60.8138872813786,
+      "color_variance": 877.83212476
+    },
+    {
+      "frame": 268,
+      "mean_brightness": 78.41031378600823,
+      "color_variance": 2746.0897102082577
+    },
+    {
+      "frame": 289,
+      "mean_brightness": 78.53965486754115,
+      "color_variance": 2734.6174010001964
+    },
+    {
+      "frame": 297,
+      "mean_brightness": 79.03288644547325,
+      "color_variance": 2605.985518127855
+    },
+    {
+      "frame": 311,
+      "mean_brightness": 78.77434172453704,
+      "color_variance": 2692.0050270508345
+    },
+    {
+      "frame": 312,
+      "mean_brightness": 78.42481031378601,
+      "color_variance": 2696.216067757879
+    },
+    {
+      "frame": 318,
+      "mean_brightness": 78.80384998713991,
+      "color_variance": 2678.1064728351216
+    },
+    {
+      "frame": 337,
+      "mean_brightness": 105.5833855774177,
+      "color_variance": 2872.700476179505
+    },
+    {
+      "frame": 342,
+      "mean_brightness": 105.83743569958848,
+      "color_variance": 2869.653982298481
+    },
+    {
+      "frame": 356,
+      "mean_brightness": 106.56099135159465,
+      "color_variance": 2945.52324364289
+    },
+    {
+      "frame": 367,
+      "mean_brightness": 124.66900157536008,
+      "color_variance": 2733.0195819869077
+    },
+    {
+      "frame": 369,
+      "mean_brightness": 126.31928369341564,
+      "color_variance": 2835.908793491006
+    },
+    {
+      "frame": 376,
+      "mean_brightness": 125.17189589763375,
+      "color_variance": 2734.1859347338154
+    },
+    {
+      "frame": 387,
+      "mean_brightness": 126.06563384130658,
+      "color_variance": 2719.5319304635123
+    },
+    {
+      "frame": 389,
+      "mean_brightness": 127.93275623713991,
+      "color_variance": 2819.8408266924002
+    },
+    {
+      "frame": 398,
+      "mean_brightness": 129.63080150462963,
+      "color_variance": 2908.2923472671478
+    },
+    {
+      "frame": 400,
+      "mean_brightness": 128.4134202996399,
+      "color_variance": 2819.6180673076874
+    },
+    {
+      "frame": 422,
+      "mean_brightness": 40.43440554269547,
+      "color_variance": 567.0021228318045
+    },
+    {
+      "frame": 424,
+      "mean_brightness": 40.34593058770576,
+      "color_variance": 567.9726776128249
+    },
+    {
+      "frame": 443,
+      "mean_brightness": 37.91739085005144,
+      "color_variance": 1407.793305994448
+    },
+    {
+      "frame": 455,
+      "mean_brightness": 38.95446807484568,
+      "color_variance": 1570.7345963243836
+    },
+    {
+      "frame": 466,
+      "mean_brightness": 36.19225823045267,
+      "color_variance": 1271.9247631627577
+    }
+  ],
+  "statistics": {
+    "mean_brightness": 75.84140039866256,
+    "std_brightness": 29.17339275031374,
+    "mean_color_variance": 2180.7295297989854
+  }
+}
