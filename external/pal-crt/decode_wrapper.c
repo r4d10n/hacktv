@@ -152,3 +152,69 @@ void get_version(int *major, int *minor, int *patch)
     *minor = PAL_MINOR;
     *patch = PAL_PATCH;
 }
+
+/* Encode an RGB image to PAL analog signal using PAL-CRT's encoder */
+int encode_field(const unsigned char *rgb, int width, int height, signed char *out)
+{
+    struct PAL_SETTINGS pal;
+
+    if (!initialized) {
+        return -1;
+    }
+
+    memset(&pal, 0, sizeof(struct PAL_SETTINGS));
+    pal.data = rgb;
+    pal.format = PAL_PIX_FORMAT_RGB;
+    pal.w = width;
+    pal.h = height;
+    pal.raw = 0;
+    pal.as_color = 1;  /* color mode */
+    pal.field = 0;
+    pal.hue = 0;
+    pal.xoffset = 0;
+    pal.yoffset = 0;
+    pal.color_phase_error = 0;
+
+    /* Encode using PAL-CRT's modulator */
+    pal_modulate(&crt, &pal);
+
+    /* Copy the analog signal */
+    memcpy(out, crt.analog, PAL_INPUT_SIZE);
+
+    return 0;
+}
+
+/* Roundtrip test: encode then decode */
+int roundtrip_test(const unsigned char *rgb_in, int width, int height,
+                   unsigned char *rgb_out, int noise)
+{
+    struct PAL_SETTINGS pal;
+
+    if (!initialized) {
+        return -1;
+    }
+
+    memset(&pal, 0, sizeof(struct PAL_SETTINGS));
+    pal.data = rgb_in;
+    pal.format = PAL_PIX_FORMAT_RGB;
+    pal.w = width;
+    pal.h = height;
+    pal.raw = 0;
+    pal.as_color = 1;
+    pal.field = 0;
+    pal.hue = 0;
+    pal.xoffset = 0;
+    pal.yoffset = 0;
+    pal.color_phase_error = 0;
+
+    /* Encode */
+    pal_modulate(&crt, &pal);
+
+    /* Decode */
+    pal_demodulate(&crt, noise);
+
+    /* Copy output */
+    memcpy(rgb_out, output_buffer, output_width * output_height * 3);
+
+    return 0;
+}
